@@ -65,11 +65,11 @@ Sequencing is dependency-driven. Tests land with the feature, not after.
 
 ### Phase 2 — Document surface
 
-- [ ] **Dashboard**: list of accessible docs, create button, navigate.
-- [ ] **Document page scaffold**: title edit, back link.
-- [ ] **Tiptap editor** (StarterKit: headings, bold, italic, lists, code-block) + placeholder + toolbar.
-- [ ] **Auto-save**: debounced PATCH, status indicator ("Saving…" / "Saved" / "Error").
-- [ ] **Version history drawer**: list snapshots, preview, restore.
+- [x] **Dashboard**: list of accessible docs, create button, navigate.
+- [x] **Document page scaffold**: title edit, back link.
+- [x] **Tiptap editor** (StarterKit: headings, bold, italic, lists, code-block) + placeholder + toolbar.
+- [x] **Auto-save**: debounced PATCH, status indicator ("Saving…" / "Saved" / "Error").
+- [x] **Version history drawer**: list snapshots, preview, restore.
 - [ ] Tests: toolbar commands, auto-save debounce.
 
 ### Phase 3 — Real-time collaboration (highest risk, tackle early)
