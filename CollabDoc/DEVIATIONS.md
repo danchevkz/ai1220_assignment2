@@ -7,7 +7,7 @@ or a compromise.
 | # | Area | A1 Design | Final Implementation | Reason | Assessment |
 |---|------|-----------|----------------------|--------|------------|
 | 1 | Storage | PostgreSQL / relational DB | In-memory dicts | Assignment spec explicitly permits it; removes setup friction for reviewers | Compromise — not production-safe; data lost on restart |
-| 2 | Conflict resolution | CRDT (Yjs) | Last-write-wins | CRDT is bonus-tier per spec; baseline is acceptable | Compromise — acceptable for baseline; CRDT tracked as bonus |
+| 2 | Collab transport | (unspecified / assumed JSON ops) | Binary Yjs frames via `y-websocket` protocol, with `y-indexeddb` offline persistence on the client | Using the standard y-websocket client removes an entire class of sync bugs and gives us offline editing for free; matches the Yjs choice from A1 | Improvement — bonus #1 (character-level CRDT) is satisfied end-to-end |
 
 ---
 

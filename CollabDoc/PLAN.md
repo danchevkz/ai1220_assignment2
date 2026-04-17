@@ -42,7 +42,7 @@ Cross-cutting (tests, docs, demo) is shared.
 
 ## Coordination items (raise with other teams)
 
-- [ ] Confirm backend will accept **binary Yjs frames** on the WS (or agree on JSON envelope fallback).
+- [ ] Confirm backend implements the **`y-websocket` wire protocol** — a Python option is [`ypy-websocket`](https://github.com/y-crdt/ypy-websocket). Client uses `y-websocket@^3` against `ws://<host>/ws/<docId>?token=<jwt>`.
 - [ ] Agree on **awareness channel** — same WS, separate message type.
 - [ ] Agree on **share-by-link** endpoint shape: `POST /documents/:id/share-links` → `{ token, role, expiresAt }`; `DELETE /documents/:id/share-links/:token`.
 - [ ] Agree on **AI SSE chunk format** — must include stable chunk/paragraph IDs so we can build per-chunk accept/reject UI for bonus #4.
@@ -75,12 +75,12 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ### Phase 3 — Real-time collaboration (highest risk, tackle early)
 
-- [ ] **Yjs integration**: `Y.Doc` per document, `@tiptap/extension-collaboration`. Owner: Alexander.
-- [ ] **WS provider**: custom adapter or `y-websocket` client, wires token into URL. Owner: Alexander. Partner: Yintong.
-- [ ] **Two-tab sync proof**: character-level edits propagate < 500ms locally. Demo-ready. Owner: Alexander. Partner: Yintong.
-- [ ] **Connection lifecycle**: initial load, join active session, disconnect/reconnect, state reconciliation. Owner: Yintong. Partner: Alexander.
-- [ ] **Offline editing**: `y-indexeddb` persistence; queue survives reload; reconciles on reconnect. Owner: Alexander. Partner: Yintong.
-- [ ] Tests: WS provider unit test with mock socket; reconnection logic. Owner: Alexander. Partner: Yintong.
+- [x] **Yjs integration**: `Y.Doc` per document, `@tiptap/extension-collaboration`. Owner: Alexander.
+- [x] **WS provider**: `y-websocket` client, token passed via `params` → `?token=`. Owner: Alexander. Partner: Yintong.
+- [ ] **Two-tab sync proof**: character-level edits propagate < 500ms locally. _Blocked on backend WS endpoint._ Owner: Alexander. Partner: Yintong.
+- [x] **Connection lifecycle** (client side): `YjsProvider` status machine `offline → connecting → connected → disconnected`, surfaced to UI; `y-websocket` handles reconnect. Owner: Yintong. Partner: Alexander.
+- [x] **Offline editing**: `y-indexeddb` persistence; queue survives reload; reconciles on reconnect. Owner: Alexander. Partner: Yintong.
+- [x] Tests: YjsProvider unit tests (mocked WS) + ConnectionStatus component. (14 new tests, 32/32 total passing) Owner: Alexander. Partner: Yintong.
 
 ### Phase 4 — Presence & awareness
 
