@@ -29,3 +29,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Claude context
+CLAUDE_SYSTEM_PROMPT.md
