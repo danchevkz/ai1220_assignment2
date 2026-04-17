@@ -487,3 +487,89 @@ body {
   background: var(--color-bg);
   border-radius: var(--radius);
 }
+
+/* Presence & awareness */
+.presence-stack {
+  display: inline-flex;
+  align-items: center;
+}
+.presence-avatar,
+.presence-overflow {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #fff;
+  border: 2px solid var(--color-surface);
+  margin-left: -6px;
+  cursor: default;
+  user-select: none;
+}
+.presence-avatar:first-child,
+.presence-overflow:first-child {
+  margin-left: 0;
+}
+.presence-avatar-me {
+  box-shadow: 0 0 0 2px var(--color-primary);
+}
+.presence-overflow {
+  background: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* Typing indicator — lives just under the editor */
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.typing-dots {
+  display: inline-flex;
+  gap: 2px;
+}
+.typing-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-3px); opacity: 1; }
+}
+
+/* Remote cursors (CollaborationCursor extension output) */
+.collaboration-cursor__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  word-break: normal;
+  pointer-events: none;
+}
+.collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 1px 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  border-radius: 3px 3px 3px 0;
+  user-select: none;
+  pointer-events: none;
+}

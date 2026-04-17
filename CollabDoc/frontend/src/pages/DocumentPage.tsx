@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Editor from '../components/Editor/Editor'
 import VersionHistory from '../components/VersionHistory'
 import ConnectionStatus from '../components/ConnectionStatus'
+import PresenceStack from '../components/PresenceStack'
+import TypingIndicator from '../components/TypingIndicator'
 import { documentsApi } from '../api/documents'
 import { extractError } from '../api/errors'
 import { useAutoSave } from '../hooks/useAutoSave'
 import { useCollaborativeDoc } from '../hooks/useCollaborativeDoc'
+import { useAwareness } from '../hooks/useAwareness'
 import { useAuthStore } from '../store/authStore'
+import { identityFor } from '../collab/identity'
 import type { Document, DocumentRole } from '../types'
 
 export default function DocumentPage() {
@@ -27,6 +31,9 @@ export default function DocumentPage() {
   // Content is owned by Yjs — the editor binds to provider.doc directly.
   // Title is still REST-managed (it's metadata, not in the Y.Doc).
   const { provider, status: connStatus, synced } = useCollaborativeDoc(id, reloadKey)
+
+  const me = useMemo(() => (user ? identityFor(user) : null), [user])
+  const { users: remoteUsers, markActive } = useAwareness(provider, me)
 
   const role: DocumentRole = doc?.collaborators.find(c => c.user_id === user?.id)?.role
     ?? (doc?.owner_id === user?.id ? 'owner' : 'viewer')
@@ -111,6 +118,7 @@ export default function DocumentPage() {
         />
 
         <div className="doc-page-actions">
+          <PresenceStack me={me} remote={remoteUsers} />
           <ConnectionStatus status={connStatus} synced={synced} titleSave={titleSave.status} />
           <span className={`role-badge role-${role}`}>{role}</span>
           <button className="btn btn-ghost" onClick={() => setHistoryOpen(true)}>
@@ -135,9 +143,13 @@ export default function DocumentPage() {
         <Editor
           key={reloadKey}
           ydoc={provider?.doc}
+          awarenessProvider={provider?.wsProvider}
+          user={me ? { name: me.name, color: me.color } : undefined}
+          onActivity={markActive}
           editable={canEdit}
           placeholder={canEdit ? 'Start writing…' : 'This document is read-only'}
         />
+        <TypingIndicator users={remoteUsers} />
       </div>
 
       <VersionHistory

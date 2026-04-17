@@ -2,7 +2,7 @@
 
 Shared working document for the team. Update checkboxes as work lands. Add notes under a task rather than deleting it — the history is useful for the deviation report.
 
-Last updated: 2026-04-17
+Last updated: 2026-04-17 (Phase 4 complete pending backend)
 
 ---
 
@@ -84,11 +84,11 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ### Phase 4 — Presence & awareness
 
-- [ ] **Awareness state**: per-user `{ name, color }` derived from user id hash (stable colors). Owner: Alexander. Partner: Yintong.
-- [ ] **Online users** avatar stack in the header. Owner: Alexander.
-- [ ] **Typing indicator** / activity status. Owner: Alexander. Partner: Yintong.
-- [ ] **Remote cursors & selections** via `@tiptap/extension-collaboration-cursor` (bonus #2). Owner: Alexander. Partner: Yintong.
-- [ ] Tests: awareness state reducer; color derivation stable. Owner: Alexander.
+- [x] **Awareness state**: per-user `{ name, color }` derived from user id hash (stable colors) — `collab/identity.ts` + `collab/awarenessState.ts`. Owner: Alexander. Partner: Yintong.
+- [x] **Online users** avatar stack in the document header (`PresenceStack`, dedupes by user id so multiple tabs from one user render once). Owner: Alexander.
+- [x] **Typing indicator** / activity status — `useAwareness.markActive` (throttled to 500ms) → `lastActive` field → `TypingIndicator` with 2.5s window. Owner: Alexander. Partner: Yintong.
+- [x] **Remote cursors & selections** via `@tiptap/extension-collaboration-cursor` (bonus #2) — wired through `Editor` with local user `{ name, color }`. _Visual verification blocked on backend WS endpoint, but the extension is configured end-to-end._ Owner: Alexander. Partner: Yintong.
+- [x] Tests: awareness state reducer, color derivation stable, presence stack dedupe/overflow, typing indicator copy + window. (25 new tests, 57/57 total passing) Owner: Alexander.
 
 ### Phase 5 — Sharing UI
 
