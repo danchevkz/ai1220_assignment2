@@ -71,7 +71,7 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 - [x] **Tiptap editor** (StarterKit: headings, bold, italic, lists, code-block) + placeholder + toolbar. Owner: Alexander.
 - [x] **Auto-save**: debounced PATCH, status indicator ("Saving..." / "Saved" / "Error"). Owner: Alexander.
 - [x] **Version history drawer**: list snapshots, preview, restore. Owner: Alexander.
-- [ ] Tests: toolbar commands, auto-save debounce. Owner: Alexander.
+- [x] Tests: toolbar commands, auto-save debounce. (12 new tests, 18/18 total passing) Owner: Alexander.
 
 ### Phase 3 — Real-time collaboration (highest risk, tackle early)
 
