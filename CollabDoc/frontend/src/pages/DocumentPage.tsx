@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Editor from '../components/Editor/Editor'
 import VersionHistory from '../components/VersionHistory'
+import ConnectionStatus from '../components/ConnectionStatus'
 import { documentsApi } from '../api/documents'
 import { extractError } from '../api/errors'
 import { useAutoSave } from '../hooks/useAutoSave'
+import { useCollaborativeDoc } from '../hooks/useCollaborativeDoc'
 import { useAuthStore } from '../store/authStore'
 import type { Document, DocumentRole } from '../types'
 
@@ -15,20 +17,21 @@ export default function DocumentPage() {
 
   const [doc, setDoc] = useState<Document | null>(null)
   const [title, setTitle] = useState('')
-  const [content, setContent] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
 
-  // A version counter bumped when we reload the doc (e.g. after a restore).
-  // Used to remount the editor so Tiptap picks up fresh initial content.
+  // Bumped after restore to force a full Y.Doc rebuild from the server.
   const [reloadKey, setReloadKey] = useState(0)
+
+  // Content is owned by Yjs — the editor binds to provider.doc directly.
+  // Title is still REST-managed (it's metadata, not in the Y.Doc).
+  const { provider, status: connStatus, synced } = useCollaborativeDoc(id, reloadKey)
 
   const role: DocumentRole = doc?.collaborators.find(c => c.user_id === user?.id)?.role
     ?? (doc?.owner_id === user?.id ? 'owner' : 'viewer')
   const canEdit = role === 'owner' || role === 'editor'
 
-  // Load document on mount / id change / reload.
   useEffect(() => {
     if (!id) return
     let cancelled = false
@@ -40,7 +43,6 @@ export default function DocumentPage() {
         if (cancelled) return
         setDoc(data)
         setTitle(data.title)
-        setContent(data.content)
       })
       .catch(err => {
         if (!cancelled) setLoadError(extractError(err, 'Failed to load document'))
@@ -51,18 +53,16 @@ export default function DocumentPage() {
     return () => { cancelled = true }
   }, [id, reloadKey])
 
-  const save = useCallback(
+  // --- Title-only auto-save (REST). Content is saved via Yjs/WS. ---
+  const saveTitle = useCallback(
     async (value: unknown) => {
       if (!id) return
-      const payload = value as { title: string; content: string }
-      await documentsApi.update(id, payload)
+      await documentsApi.update(id, { title: value as string })
     },
     [id],
   )
+  const titleSave = useAutoSave(saveTitle, { delay: 1000 })
 
-  const autoSave = useAutoSave(save, { delay: 1000 })
-
-  // Guard the first trigger — don't auto-save the data we just loaded.
   const loadedOnceRef = useRef(false)
   useEffect(() => {
     if (isLoading || !doc) return
@@ -71,19 +71,17 @@ export default function DocumentPage() {
       return
     }
     if (!canEdit) return
-    autoSave.trigger({ title, content })
+    titleSave.trigger(title)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, content])
+  }, [title])
 
-  // Reset the loaded guard when the doc id changes or we reload.
   useEffect(() => { loadedOnceRef.current = false }, [id, reloadKey])
 
-  // Flush pending saves on tab close.
   useEffect(() => {
-    const handler = () => { autoSave.flush() }
+    const handler = () => { titleSave.flush() }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [autoSave])
+  }, [titleSave])
 
   if (isLoading) {
     return <div className="page-loading">Loading document…</div>
@@ -113,7 +111,7 @@ export default function DocumentPage() {
         />
 
         <div className="doc-page-actions">
-          <SaveIndicator status={autoSave.status} error={autoSave.error} />
+          <ConnectionStatus status={connStatus} synced={synced} titleSave={titleSave.status} />
           <span className={`role-badge role-${role}`}>{role}</span>
           <button className="btn btn-ghost" onClick={() => setHistoryOpen(true)}>
             History
@@ -136,8 +134,7 @@ export default function DocumentPage() {
       <div className="doc-page-editor">
         <Editor
           key={reloadKey}
-          content={content}
-          onChange={setContent}
+          ydoc={provider?.doc}
           editable={canEdit}
           placeholder={canEdit ? 'Start writing…' : 'This document is read-only'}
         />
@@ -151,18 +148,5 @@ export default function DocumentPage() {
         onRestored={() => setReloadKey(k => k + 1)}
       />
     </div>
-  )
-}
-
-function SaveIndicator({ status, error }: { status: string; error: string | null }) {
-  const label =
-    status === 'saving' ? 'Saving…' :
-    status === 'saved'  ? 'Saved' :
-    status === 'error'  ? (error ? `Save failed: ${error}` : 'Save failed') :
-    ''
-  return (
-    <span className={`save-indicator save-indicator-${status}`} aria-live="polite">
-      {label}
-    </span>
   )
 }
