@@ -6,6 +6,7 @@ import {
   clearTokens,
   getRefreshToken,
 } from '../api/client'
+import { extractError } from '../api/errors'
 import type { User } from '../types'
 
 export interface AuthState {
@@ -82,23 +83,3 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   clearError: () => set({ error: null }),
 }))
-
-function extractError(err: unknown): string {
-  console.error('[extractError]', err)
-  if (err && typeof err === 'object') {
-    if ('code' in err && (err as { code: string }).code === 'ERR_NETWORK') {
-      return 'Cannot reach the server. Is the backend running?'
-    }
-    if ('response' in err) {
-      const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } }
-      const status = axiosErr.response?.status
-      const detail = axiosErr.response?.data?.detail
-      if (status === 502 || status === 503 || status === 504) {
-        return 'Cannot reach the server. Is the backend running?'
-      }
-      return detail ?? 'An error occurred'
-    }
-  }
-  if (err instanceof Error) return err.message
-  return 'An error occurred'
-}
