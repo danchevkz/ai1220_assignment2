@@ -53,73 +53,74 @@ Cross-cutting (tests, docs, demo) is shared.
 ## Our build order (Frontend & Collaboration)
 
 Sequencing is dependency-driven. Tests land with the feature, not after.
+Each item has one primary owner. Add a partner only when cross-team coordination is expected.
 
 ### Phase 1 — Foundations (unblocks everything else)
 
-- [x] **App shell**: router, layout, 404.
-- [x] **Auth UI**: Login, Register pages.
-- [x] **Auth state**: Zustand `authStore`; persist refresh token in localStorage; access token in memory.
-- [x] **axios client** with refresh interceptor (no raw 401s during editing — spec 1.1).
-- [x] **`ProtectedRoute`** wrapper.
-- [x] Tests: login form happy path + error path. (6/6 passing)
+- [x] **App shell**: router, layout, 404. Owner: Alexander.
+- [x] **Auth UI**: Login, Register pages. Owner: Alexander.
+- [x] **Auth state**: Zustand `authStore`; persist refresh token in localStorage; access token in memory. Owner: Alexander. Partner: Yintong.
+- [x] **axios client** with refresh interceptor (no raw 401s during editing — spec 1.1). Owner: Alexander. Partner: Yintong.
+- [x] **`ProtectedRoute`** wrapper. Owner: Alexander.
+- [x] Tests: login form happy path + error path. (6/6 passing) Owner: Alexander.
 
 ### Phase 2 — Document surface
 
-- [x] **Dashboard**: list of accessible docs, create button, navigate.
-- [x] **Document page scaffold**: title edit, back link.
-- [x] **Tiptap editor** (StarterKit: headings, bold, italic, lists, code-block) + placeholder + toolbar.
-- [x] **Auto-save**: debounced PATCH, status indicator ("Saving…" / "Saved" / "Error").
-- [x] **Version history drawer**: list snapshots, preview, restore.
-- [ ] Tests: toolbar commands, auto-save debounce.
+- [x] **Dashboard**: list of accessible docs, create button, navigate. Owner: Alexander.
+- [x] **Document page scaffold**: title edit, back link. Owner: Alexander.
+- [x] **Tiptap editor** (StarterKit: headings, bold, italic, lists, code-block) + placeholder + toolbar. Owner: Alexander.
+- [x] **Auto-save**: debounced PATCH, status indicator ("Saving..." / "Saved" / "Error"). Owner: Alexander.
+- [x] **Version history drawer**: list snapshots, preview, restore. Owner: Alexander.
+- [ ] Tests: toolbar commands, auto-save debounce. Owner: Alexander.
 
 ### Phase 3 — Real-time collaboration (highest risk, tackle early)
 
-- [ ] **Yjs integration**: `Y.Doc` per document, `@tiptap/extension-collaboration`.
-- [ ] **WS provider**: custom adapter or `y-websocket` client, wires token into URL.
-- [ ] **Two-tab sync proof**: character-level edits propagate < 500ms locally. Demo-ready.
-- [ ] **Connection lifecycle**: initial load, join active session, disconnect/reconnect, state reconciliation.
-- [ ] **Offline editing**: `y-indexeddb` persistence; queue survives reload; reconciles on reconnect.
-- [ ] Tests: WS provider unit test with mock socket; reconnection logic.
+- [ ] **Yjs integration**: `Y.Doc` per document, `@tiptap/extension-collaboration`. Owner: Alexander.
+- [ ] **WS provider**: custom adapter or `y-websocket` client, wires token into URL. Owner: Alexander. Partner: Yintong.
+- [ ] **Two-tab sync proof**: character-level edits propagate < 500ms locally. Demo-ready. Owner: Alexander. Partner: Yintong.
+- [ ] **Connection lifecycle**: initial load, join active session, disconnect/reconnect, state reconciliation. Owner: Yintong. Partner: Alexander.
+- [ ] **Offline editing**: `y-indexeddb` persistence; queue survives reload; reconciles on reconnect. Owner: Alexander. Partner: Yintong.
+- [ ] Tests: WS provider unit test with mock socket; reconnection logic. Owner: Alexander. Partner: Yintong.
 
 ### Phase 4 — Presence & awareness
 
-- [ ] **Awareness state**: per-user `{ name, color }` derived from user id hash (stable colors).
-- [ ] **Online users** avatar stack in the header.
-- [ ] **Typing indicator** / activity status.
-- [ ] **Remote cursors & selections** via `@tiptap/extension-collaboration-cursor` (bonus #2).
-- [ ] Tests: awareness state reducer; color derivation stable.
+- [ ] **Awareness state**: per-user `{ name, color }` derived from user id hash (stable colors). Owner: Alexander. Partner: Yintong.
+- [ ] **Online users** avatar stack in the header. Owner: Alexander.
+- [ ] **Typing indicator** / activity status. Owner: Alexander. Partner: Yintong.
+- [ ] **Remote cursors & selections** via `@tiptap/extension-collaboration-cursor` (bonus #2). Owner: Alexander. Partner: Yintong.
+- [ ] Tests: awareness state reducer; color derivation stable. Owner: Alexander.
 
 ### Phase 5 — Sharing UI
 
-- [ ] **Share modal**: invite by email/username with role picker (owner/editor/viewer).
-- [ ] **Access list**: current collaborators + role change + remove.
-- [ ] **Share-by-link** (bonus #3): generate link, copy, configure role, revoke.
-- [ ] Tests: modal role picker, link revoke optimistic update.
+- [ ] **Share modal**: invite by email/username with role picker (owner/editor/viewer). Owner: Alexander. Partner: Yintong.
+- [ ] **Access list**: current collaborators + role change + remove. Owner: Alexander. Partner: Yintong.
+- [ ] **Share-by-link** (bonus #3): generate link, copy, configure role, revoke. Owner: Yintong. Partner: Alexander.
+- [ ] Tests: modal role picker, link revoke optimistic update. Owner: Alexander.
 
 ### Phase 6 — AI suggestion UI
 
-- [ ] **AI side panel**: triggered from selection; "Rewrite" and "Summarize" at minimum.
-- [ ] **Streaming render**: consume SSE via `fetch` + `ReadableStream`; progressive text.
-- [ ] **Cancel** in-progress generation.
-- [ ] **Accept / Reject / Edit** suggestion, with Undo after acceptance.
-- [ ] **Partial acceptance** (bonus #4): per-chunk/paragraph accept/reject in diff view.
-- [ ] **History UI**: per-doc list of past interactions with accept/reject status.
-- [ ] **Strategy note** in README: how AI suggestions behave during concurrent edits (spec 3.3).
-- [ ] Tests: streaming reducer, accept applies to doc, cancel aborts fetch.
+- [ ] **AI side panel**: triggered from selection; "Rewrite" and "Summarize" at minimum. Owner: Alexander. Partner: Anel.
+- [ ] **Streaming render**: consume SSE via `fetch` + `ReadableStream`; progressive text. Owner: Alexander. Partner: Anel.
+- [ ] **Cancel** in-progress generation. Owner: Alexander. Partner: Anel.
+- [ ] **Accept / Reject / Edit** suggestion, with Undo after acceptance. Owner: Alexander. Partner: Anel.
+- [ ] **Partial acceptance** (bonus #4): per-chunk/paragraph accept/reject in diff view. Owner: Alexander. Partner: Anel.
+- [ ] **History UI**: per-doc list of past interactions with accept/reject status. Owner: Alexander. Partner: Anel.
+- [ ] **Strategy note** in README: how AI suggestions behave during concurrent edits (spec 3.3). Owner: Anel. Partner: Alexander.
+- [ ] Tests: streaming reducer, accept applies to doc, cancel aborts fetch. Owner: Alexander. Partner: Anel.
 
 ### Phase 7 — Quality & docs
 
-- [ ] **Component tests** (Vitest + RTL): auth form, editor toolbar, AI suggestion panel, presence list.
-- [ ] **E2E tests** (Playwright, bonus #5): login → create doc → edit → AI rewrite → accept.
-- [ ] **README**: auth lifecycle diagram (REST + WS), WS message protocol, collab strategy, AI concurrent-edit strategy.
-- [ ] **Module READMEs**: short purpose note in each `src/` folder.
-- [ ] **DEVIATIONS.md**: update as we diverge from A1. Remove the "LWW instead of CRDT" row once Yjs is in.
-- [ ] **.env.example**: documented.
+- [ ] **Component tests** (Vitest + RTL): auth form, editor toolbar, AI suggestion panel, presence list. Owner: Alexander. Partner: Anel.
+- [ ] **E2E tests** (Playwright, bonus #5): login → create doc → edit → AI rewrite → accept. Owner: Alexander. Partner: Yintong.
+- [ ] **README**: auth lifecycle diagram (REST + WS), WS message protocol, collab strategy, AI concurrent-edit strategy. Owner: Yintong. Partners: Alexander, Anel.
+- [ ] **Module READMEs**: short purpose note in each `src/` folder. Owner: Yintong.
+- [ ] **DEVIATIONS.md**: update as we diverge from A1. Remove the "LWW instead of CRDT" row once Yjs is in. Owner: Yintong.
+- [ ] **.env.example**: documented. Owner: Yintong. Partner: Anel.
 
 ### Phase 8 — Demo prep
 
-- [ ] Rehearse the 5-minute demo in the exact spec order: register → create → rich-text + auto-save → share with role enforcement → two-window collab → AI streaming (two features, suggestion UX, cancel) → version restore.
-- [ ] Prepare Q&A answers: JWT refresh, end-to-end AI flow, concurrent edit handling, LLM failure scenarios, test coverage, A1 deviations.
+- [ ] Rehearse the 5-minute demo in the exact spec order: register → create → rich-text + auto-save → share with role enforcement → two-window collab → AI streaming (two features, suggestion UX, cancel) → version restore. Owner: Alexander. Partners: Yintong, Anel.
+- [ ] Prepare Q&A answers: JWT refresh, end-to-end AI flow, concurrent edit handling, LLM failure scenarios, test coverage, A1 deviations. Owner: Yintong. Partners: Alexander, Anel.
 
 ---
 
