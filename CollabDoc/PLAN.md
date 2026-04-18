@@ -2,7 +2,7 @@
 
 Shared working document for the team. Update checkboxes as work lands. Add notes under a task rather than deleting it — the history is useful for the deviation report.
 
-Last updated: 2026-04-17 (Phase 4 complete pending backend)
+Last updated: 2026-04-18 (Phase 5 complete pending backend endpoints)
 
 ---
 
@@ -44,7 +44,8 @@ Cross-cutting (tests, docs, demo) is shared.
 
 - [ ] Confirm backend implements the **`y-websocket` wire protocol** — a Python option is [`ypy-websocket`](https://github.com/y-crdt/ypy-websocket). Client uses `y-websocket@^3` against `ws://<host>/ws/<docId>?token=<jwt>`.
 - [ ] Agree on **awareness channel** — same WS, separate message type.
-- [ ] Agree on **share-by-link** endpoint shape: `POST /documents/:id/share-links` → `{ token, role, expiresAt }`; `DELETE /documents/:id/share-links/:token`.
+- [x] Agree on **share-by-link** endpoint shape: client now expects `GET /documents/:id/share-links` (list), `POST /documents/:id/share-links` body `{ role, expires_in_hours: number | null }` → `ShareLink { token, role, created_at, expires_at: string | null, created_by }`, and `DELETE /documents/:id/share-links/:token`. Public landing route at `/share/:token` (frontend redeems token by hitting backend — Yintong to confirm endpoint shape for redemption).
+- [ ] Confirm backend exposes **`PATCH /documents/:id/collaborators/:userId`** (body `{ role }`) and **`DELETE /documents/:id/collaborators/:userId`** — both return the updated `Document`. Used by ShareModal access list.
 - [ ] Agree on **AI SSE chunk format** — must include stable chunk/paragraph IDs so we can build per-chunk accept/reject UI for bonus #4.
 - [ ] Branch/PR strategy: feature branches + PRs with reviews. Rubric flags "single final commit" as a red flag.
 
@@ -92,10 +93,10 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ### Phase 5 — Sharing UI
 
-- [ ] **Share modal**: invite by email/username with role picker (owner/editor/viewer). Owner: Alexander. Partner: Yintong.
-- [ ] **Access list**: current collaborators + role change + remove. Owner: Alexander. Partner: Yintong.
-- [ ] **Share-by-link** (bonus #3): generate link, copy, configure role, revoke. Owner: Yintong. Partner: Alexander.
-- [ ] Tests: modal role picker, link revoke optimistic update. Owner: Alexander.
+- [x] **Share modal**: invite by username/email with role picker (editor/viewer). Owner-only invite controls; non-owners see a read-only access list. `components/ShareModal.tsx`. Owner: Alexander. Partner: Yintong.
+- [x] **Access list**: owner row first labeled "(you)"; per-collaborator role select + Remove button (owner-only). Calls new `PATCH /documents/:id/collaborators/:userId` and `DELETE /documents/:id/collaborators/:userId`. _Backend endpoints need to be implemented by Yintong._ Owner: Alexander. Partner: Yintong.
+- [x] **Share-by-link** (bonus #3): `components/ShareLinksPanel.tsx`. Create with role + expiry (24h/7d/30d/never), copy with `navigator.clipboard`, optimistic revoke (link disappears immediately, restores on failure). Hits `GET/POST/DELETE /documents/:id/share-links[/:token]`. _Backend endpoints need to be implemented by Yintong._ Owner: Alexander. Partner: Yintong.
+- [x] Tests: 10 ShareModal tests (invite + role picker + role change + remove + non-owner read-only + invite error) and 7 ShareLinksPanel tests (empty state, render, create, optimistic revoke, restore-on-failure, copy affordance, cancel-confirm). (17 new tests, 74/74 total passing) Owner: Alexander.
 
 ### Phase 6 — AI suggestion UI
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Editor from '../components/Editor/Editor'
 import VersionHistory from '../components/VersionHistory'
+import ShareModal from '../components/ShareModal'
 import ConnectionStatus from '../components/ConnectionStatus'
 import PresenceStack from '../components/PresenceStack'
 import TypingIndicator from '../components/TypingIndicator'
@@ -24,6 +25,7 @@ export default function DocumentPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
 
   // Bumped after restore to force a full Y.Doc rebuild from the server.
   const [reloadKey, setReloadKey] = useState(0)
@@ -124,6 +126,9 @@ export default function DocumentPage() {
           <button className="btn btn-ghost" onClick={() => setHistoryOpen(true)}>
             History
           </button>
+          <button className="btn btn-ghost" onClick={() => setShareOpen(true)}>
+            Share
+          </button>
           {role === 'owner' && (
             <button
               className="btn btn-ghost"
@@ -159,6 +164,16 @@ export default function DocumentPage() {
         canRestore={canEdit}
         onRestored={() => setReloadKey(k => k + 1)}
       />
+
+      {user && (
+        <ShareModal
+          document={doc}
+          currentUserId={user.id}
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          onChanged={next => setDoc(next)}
+        />
+      )}
     </div>
   )
 }

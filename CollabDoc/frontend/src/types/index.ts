@@ -20,6 +20,14 @@ export interface DocumentCollaborator {
   role: DocumentRole
 }
 
+export interface ShareLink {
+  token: string
+  role: DocumentRole
+  created_at: string
+  expires_at: string | null
+  created_by: string
+}
+
 export interface DocumentVersion {
   version: number
   content: string

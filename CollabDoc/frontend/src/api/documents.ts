@@ -4,6 +4,7 @@ import type {
   DocumentSummary,
   DocumentVersion,
   DocumentRole,
+  ShareLink,
 } from '../types'
 
 export interface CreateDocumentRequest {
@@ -18,6 +19,15 @@ export interface UpdateDocumentRequest {
 export interface ShareRequest {
   username_or_email: string
   role: DocumentRole
+}
+
+export interface UpdateCollaboratorRequest {
+  role: DocumentRole
+}
+
+export interface CreateShareLinkRequest {
+  role: DocumentRole
+  expires_in_hours?: number | null
 }
 
 export const documentsApi = {
@@ -38,6 +48,27 @@ export const documentsApi = {
 
   share: (id: string, data: ShareRequest) =>
     apiClient.post<Document>(`/documents/${id}/share`, data).then(r => r.data),
+
+  updateCollaborator: (id: string, userId: string, data: UpdateCollaboratorRequest) =>
+    apiClient
+      .patch<Document>(`/documents/${id}/collaborators/${userId}`, data)
+      .then(r => r.data),
+
+  removeCollaborator: (id: string, userId: string) =>
+    apiClient
+      .delete<Document>(`/documents/${id}/collaborators/${userId}`)
+      .then(r => r.data),
+
+  listShareLinks: (id: string) =>
+    apiClient.get<ShareLink[]>(`/documents/${id}/share-links`).then(r => r.data),
+
+  createShareLink: (id: string, data: CreateShareLinkRequest) =>
+    apiClient.post<ShareLink>(`/documents/${id}/share-links`, data).then(r => r.data),
+
+  revokeShareLink: (id: string, token: string) =>
+    apiClient
+      .delete<void>(`/documents/${id}/share-links/${token}`)
+      .then(r => r.data),
 
   versions: (id: string) =>
     apiClient.get<DocumentVersion[]>(`/documents/${id}/versions`).then(r => r.data),
