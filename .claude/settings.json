@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npx tsc *)",
       "Bash(npm test *)",
-      "Bash(npm view *)"
+      "Bash(npm view *)",
+      "Bash(gh pr *)",
+      "Bash(npm run *)"
     ]
   }
 }

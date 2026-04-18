@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Editor as TiptapEditor } from '@tiptap/react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Editor from '../components/Editor/Editor'
 import VersionHistory from '../components/VersionHistory'
@@ -6,6 +7,8 @@ import ShareModal from '../components/ShareModal'
 import ConnectionStatus from '../components/ConnectionStatus'
 import PresenceStack from '../components/PresenceStack'
 import TypingIndicator from '../components/TypingIndicator'
+import AISidePanel from '../components/AISidePanel'
+import AIHistoryList from '../components/AIHistoryList'
 import { documentsApi } from '../api/documents'
 import { extractError } from '../api/errors'
 import { useAutoSave } from '../hooks/useAutoSave'
@@ -26,6 +29,11 @@ export default function DocumentPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [aiHistoryOpen, setAiHistoryOpen] = useState(false)
+  const [aiHistoryRefreshKey, setAiHistoryRefreshKey] = useState(0)
+  const [selectionText, setSelectionText] = useState('')
+  const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null)
 
   // Bumped after restore to force a full Y.Doc rebuild from the server.
   const [reloadKey, setReloadKey] = useState(0)
@@ -92,6 +100,28 @@ export default function DocumentPage() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [titleSave])
 
+  // --- AI panel integration ---
+  const documentText = useCallback(() => {
+    return editorInstance?.state.doc.textBetween(0, editorInstance.state.doc.content.size, '\n\n') ?? ''
+  }, [editorInstance])
+
+  const handleApplyAISuggestion = useCallback(
+    (text: string, hadSelection: boolean) => {
+      if (!editorInstance) return
+      const chain = editorInstance.chain().focus()
+      // If the user had a selection when they invoked the AI, replace it.
+      // Otherwise insert at the current cursor position (or end if collapsed).
+      if (hadSelection && !editorInstance.state.selection.empty) {
+        chain.deleteSelection().insertContent(text).run()
+      } else {
+        chain.insertContent(text).run()
+      }
+      // Bump history so the panel refetches the new interaction.
+      setAiHistoryRefreshKey(k => k + 1)
+    },
+    [editorInstance],
+  )
+
   if (isLoading) {
     return <div className="page-loading">Loading document…</div>
   }
@@ -129,6 +159,20 @@ export default function DocumentPage() {
           <button className="btn btn-ghost" onClick={() => setShareOpen(true)}>
             Share
           </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => setAiPanelOpen(o => !o)}
+            aria-pressed={aiPanelOpen}
+          >
+            AI
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => setAiHistoryOpen(o => !o)}
+            aria-pressed={aiHistoryOpen}
+          >
+            AI history
+          </button>
           {role === 'owner' && (
             <button
               className="btn btn-ghost"
@@ -144,17 +188,39 @@ export default function DocumentPage() {
         </div>
       </div>
 
-      <div className="doc-page-editor">
-        <Editor
-          key={reloadKey}
-          ydoc={provider?.doc}
-          awarenessProvider={provider?.wsProvider}
-          user={me ? { name: me.name, color: me.color } : undefined}
-          onActivity={markActive}
-          editable={canEdit}
-          placeholder={canEdit ? 'Start writing…' : 'This document is read-only'}
-        />
-        <TypingIndicator users={remoteUsers} />
+      <div className={`doc-page-editor${aiPanelOpen ? ' doc-page-editor-with-ai' : ''}`}>
+        <div className="doc-editor-main">
+          <Editor
+            key={reloadKey}
+            ydoc={provider?.doc}
+            awarenessProvider={provider?.wsProvider}
+            user={me ? { name: me.name, color: me.color } : undefined}
+            onActivity={markActive}
+            onSelectionChange={setSelectionText}
+            onEditor={setEditorInstance}
+            editable={canEdit}
+            placeholder={canEdit ? 'Start writing…' : 'This document is read-only'}
+          />
+          <TypingIndicator users={remoteUsers} />
+
+          {aiHistoryOpen && (
+            <div className="ai-history-wrap">
+              <h3 className="ai-history-title">AI history</h3>
+              <AIHistoryList documentId={doc.id} refreshKey={aiHistoryRefreshKey} />
+            </div>
+          )}
+        </div>
+
+        {canEdit && (
+          <AISidePanel
+            documentId={doc.id}
+            selectionText={selectionText}
+            documentText={documentText()}
+            open={aiPanelOpen}
+            onClose={() => setAiPanelOpen(false)}
+            onApply={handleApplyAISuggestion}
+          />
+        )}
       </div>
 
       <VersionHistory

@@ -1,4 +1,4 @@
-import { useEditor, EditorContent, type Extensions } from '@tiptap/react'
+import { useEditor, EditorContent, type Extensions, type Editor as TiptapEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -24,6 +24,14 @@ interface Props {
   content?: string
   onChange?: (html: string) => void
   onActivity?: () => void
+  // Fires whenever the selection changes — payload is the currently selected
+  // plain-text. Empty string means "no selection" (cursor only). Used by the
+  // AI side panel to know what text to operate on.
+  onSelectionChange?: (selectionText: string) => void
+  // Receives the raw Tiptap editor instance for callers that need to issue
+  // commands (e.g. AI panel applying accepted text). Called once on mount
+  // and again with `null` on unmount.
+  onEditor?: (editor: TiptapEditor | null) => void
   editable?: boolean
   placeholder?: string
 }
@@ -35,6 +43,8 @@ export default function Editor({
   content = '',
   onChange,
   onActivity,
+  onSelectionChange,
+  onEditor,
   editable = true,
   placeholder = 'Start writing…',
 }: Props) {
@@ -76,10 +86,23 @@ export default function Editor({
         onChange?.(editor.getHTML())
         onActivity?.()
       },
+      onSelectionUpdate({ editor }) {
+        if (!onSelectionChange) return
+        const { from, to, empty } = editor.state.selection
+        onSelectionChange(empty ? '' : editor.state.doc.textBetween(from, to, '\n'))
+      },
     },
     // Rebuild the editor if the underlying Y.Doc changes (doc switch).
     [ydoc],
   )
+
+  // Surface the editor instance to the parent so AI panel etc. can issue
+  // commands on it. Re-emits whenever the editor is rebuilt.
+  useEffect(() => {
+    if (!onEditor) return
+    onEditor(editor ?? null)
+    return () => onEditor(null)
+  }, [editor, onEditor])
 
   // Sync external content only in local mode. In collab mode the Y.Doc owns it.
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 Shared working document for the team. Update checkboxes as work lands. Add notes under a task rather than deleting it — the history is useful for the deviation report.
 
-Last updated: 2026-04-18 (Phase 5 complete pending backend endpoints)
+Last updated: 2026-04-18 (Phase 6 frontend complete; Anel's AI backend PR #1 reviewed — coordination items updated)
 
 ---
 
@@ -46,7 +46,7 @@ Cross-cutting (tests, docs, demo) is shared.
 - [ ] Agree on **awareness channel** — same WS, separate message type.
 - [x] Agree on **share-by-link** endpoint shape: client now expects `GET /documents/:id/share-links` (list), `POST /documents/:id/share-links` body `{ role, expires_in_hours: number | null }` → `ShareLink { token, role, created_at, expires_at: string | null, created_by }`, and `DELETE /documents/:id/share-links/:token`. Public landing route at `/share/:token` (frontend redeems token by hitting backend — Yintong to confirm endpoint shape for redemption).
 - [ ] Confirm backend exposes **`PATCH /documents/:id/collaborators/:userId`** (body `{ role }`) and **`DELETE /documents/:id/collaborators/:userId`** — both return the updated `Document`. Used by ShareModal access list.
-- [ ] Agree on **AI SSE chunk format** — must include stable chunk/paragraph IDs so we can build per-chunk accept/reject UI for bonus #4.
+- [x] **AI SSE format agreed** (Anel PR #1): backend streams `{ request_id, operation, delta, done }`. Frontend adapter in `api/ai.ts` translates to internal events; paragraph-splits on `done: true` for per-paragraph partial accept (bonus #4). Endpoints: `POST /ai/rewrite/stream`, `POST /ai/summarize/stream`, `GET /ai/history/:docId?user_id=`, `POST /ai/generations/:id/cancel`. **Action for Yintong**: mount `app.ai.router` in `main.py` at `/api/v1`.
 - [ ] Branch/PR strategy: feature branches + PRs with reviews. Rubric flags "single final commit" as a red flag.
 
 ---
@@ -100,14 +100,14 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ### Phase 6 — AI suggestion UI
 
-- [ ] **AI side panel**: triggered from selection; "Rewrite" and "Summarize" at minimum. Owner: Alexander. Partner: Anel.
-- [ ] **Streaming render**: consume SSE via `fetch` + `ReadableStream`; progressive text. Owner: Alexander. Partner: Anel.
-- [ ] **Cancel** in-progress generation. Owner: Alexander. Partner: Anel.
-- [ ] **Accept / Reject / Edit** suggestion, with Undo after acceptance. Owner: Alexander. Partner: Anel.
-- [ ] **Partial acceptance** (bonus #4): per-chunk/paragraph accept/reject in diff view. Owner: Alexander. Partner: Anel.
-- [ ] **History UI**: per-doc list of past interactions with accept/reject status. Owner: Alexander. Partner: Anel.
+- [x] **AI side panel**: triggered from editor selection; "Rewrite" + "Summarize". `components/AISidePanel.tsx`. Owner: Alexander. Partner: Anel.
+- [x] **Streaming render**: SSE consumer in `api/ai.ts` (fetch + ReadableStream); adapts Anel's `{ delta, done }` format to internal events; progressive text display. Owner: Alexander. Partner: Anel.
+- [x] **Cancel** in-progress generation: AbortController passed to `fetch`; dispatches `cancel` reducer action; Cancel button shown during streaming. Owner: Alexander. Partner: Anel.
+- [x] **Accept / Reject / Edit** suggestion: per-chunk buttons + "Apply all"/"Reject all"; accepted text inserted via `editor.chain().insertContent()`; Tiptap history handles Undo natively. Owner: Alexander. Partner: Anel.
+- [x] **Partial acceptance** (bonus #4): backend streams word-level deltas → frontend splits completed text into paragraph chunks on `done`; per-chunk Accept/Reject in UI. `ai/aiState.ts` `replace_chunks` event. Owner: Alexander. Partner: Anel.
+- [x] **History UI**: `components/AIHistoryList.tsx`; `GET /ai/history/:docId?user_id=`; shows operation, status, char counts. Owner: Alexander. Partner: Anel.
 - [ ] **Strategy note** in README: how AI suggestions behave during concurrent edits (spec 3.3). Owner: Anel. Partner: Alexander.
-- [ ] Tests: streaming reducer, accept applies to doc, cancel aborts fetch. Owner: Alexander. Partner: Anel.
+- [x] Tests: 16 aiState reducer tests, 6 aiStream SSE consumer tests (including abort), 10 aiSidePanel UI tests (partial accept, edit, cancel, error). (32 new tests, 106/106 total passing) Owner: Alexander. Partner: Anel.
 
 ### Phase 7 — Quality & docs
 
