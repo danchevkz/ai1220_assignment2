@@ -1,3 +1,4 @@
+.claude/settings.json
 # Python
 __pycache__/
 *.py[cod]
@@ -38,4 +39,3 @@ DS_Store
 
 # Claude context
 CLAUDE_SYSTEM_PROMPT.md
-.claude/settings.json
