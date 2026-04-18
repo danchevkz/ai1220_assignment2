@@ -135,6 +135,6 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ## Open questions for the team
 
-- [ ] Do we have a shared Gemini API key, or one key per dev in `.env`? We'll use env. variables
+- [x] Do we have a shared Gemini API key, or one key per dev in `.env`? We'll use env. variables
 - [ ] Who owns the run-script / Makefile updates as features land?
 - [ ] Who writes the final deviation report rollup before submission?
