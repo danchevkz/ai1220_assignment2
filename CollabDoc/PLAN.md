@@ -2,7 +2,7 @@
 
 Shared working document for the team. Update checkboxes as work lands. Add notes under a task rather than deleting it — the history is useful for the deviation report.
 
-Last updated: 2026-04-18 (Phase 6 frontend complete; Anel's AI backend PR #1 reviewed — coordination items updated. Phase 7 kickoff: `/share/:token` landing page + frontend `.env.example` in.)
+Last updated: 2026-04-18 (Phase 7: Playwright E2E suite in (bonus #5). 8 specs green against the live backend: auth ×4, golden-path ×3, two-tab collaboration ×1. Anel's AI backend PR #1 merged as a parallel module — Yintong's router stays mounted.)
 
 ---
 
@@ -113,7 +113,7 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 ### Phase 7 — Quality & docs
 
 - [ ] **Component tests** (Vitest + RTL): auth form, editor toolbar, AI suggestion panel, presence list. Owner: Alexander. Partner: Anel.
-- [ ] **E2E tests** (Playwright, bonus #5): login → create doc → edit → AI rewrite → accept. Owner: Alexander. Partner: Yintong.
+- [x] **E2E tests** (Playwright, bonus #5): `frontend/e2e/` — 8 specs, single worker (backend state is shared). Auth ×4 (register, protected redirect, login-after-register, invalid login), golden-path ×3 (rich-text + title auto-save, AI rewrite streaming + partial-accept, version history drawer + restore), collaboration ×1 (two browser contexts, share-by-link redeem, bidirectional WS propagation). Playwright `webServer` boots Vite on :5199 (backend assumed on :8000, `make dev-backend`). Run via `make test-e2e` or `npm run test:e2e`. Owner: Alexander.
 - [ ] **README**: auth lifecycle diagram (REST + WS), WS message protocol, collab strategy, AI concurrent-edit strategy. Owner: Yintong. Partners: Alexander, Anel.
 - [ ] **Module READMEs**: short purpose note in each `src/` folder. Owner: Yintong.
 - [ ] **DEVIATIONS.md**: update as we diverge from A1. Remove the "LWW instead of CRDT" row once Yjs is in. Owner: Yintong.

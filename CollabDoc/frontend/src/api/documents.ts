@@ -74,7 +74,9 @@ export const documentsApi = {
   // user as a collaborator with the token's role. Requires auth (handled by
   // ShareRedeem by redirecting unauthed users to /login with a `from` state).
   redeemShareLink: (token: string) =>
-    apiClient.post<Document>(`/share-links/${token}/redeem`).then(r => r.data),
+    apiClient
+      .post<{ document: Document; role: string }>(`/documents/share-links/${token}/redeem`)
+      .then(r => r.data.document),
 
   versions: (id: string) =>
     apiClient.get<DocumentVersion[]>(`/documents/${id}/versions`).then(r => r.data),

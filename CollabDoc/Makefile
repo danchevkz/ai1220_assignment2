@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev dev-backend dev-frontend test test-backend test-frontend lint
+.PHONY: install install-backend install-frontend dev dev-backend dev-frontend test test-backend test-frontend test-e2e lint
 
 # ── Install ───────────────────────────────────────────────────────────────────
 
@@ -30,6 +30,11 @@ test-backend:
 
 test-frontend:
 	cd frontend && npm run test
+
+# E2E tests require both servers. Playwright starts the frontend via its
+# webServer config; backend must be running on :8000 beforehand.
+test-e2e:
+	cd frontend && npm run test:e2e
 
 # ── Lint ──────────────────────────────────────────────────────────────────────
 
