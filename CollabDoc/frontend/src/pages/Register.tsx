@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 
 export default function Register() {
@@ -15,6 +15,8 @@ export default function Register() {
   const clearError = useAuthStore(s => s.clearError)
 
   const navigate = useNavigate()
+  const location = useLocation()
+  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/'
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -32,7 +34,7 @@ export default function Register() {
 
     try {
       await register(username, email, password)
-      navigate('/', { replace: true })
+      navigate(from, { replace: true })
     } catch {
       // error is already set in the store
     }
@@ -111,7 +113,7 @@ export default function Register() {
 
         <p className="auth-footer">
           Already have an account?{' '}
-          <Link to="/login">Sign in</Link>
+          <Link to="/login" state={location.state}>Sign in</Link>
         </p>
       </div>
     </div>

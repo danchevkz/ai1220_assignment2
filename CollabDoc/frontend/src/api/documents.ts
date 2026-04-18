@@ -70,6 +70,12 @@ export const documentsApi = {
       .delete<void>(`/documents/${id}/share-links/${token}`)
       .then(r => r.data),
 
+  // Public redeem endpoint: resolves token → document and adds the current
+  // user as a collaborator with the token's role. Requires auth (handled by
+  // ShareRedeem by redirecting unauthed users to /login with a `from` state).
+  redeemShareLink: (token: string) =>
+    apiClient.post<Document>(`/share-links/${token}/redeem`).then(r => r.data),
+
   versions: (id: string) =>
     apiClient.get<DocumentVersion[]>(`/documents/${id}/versions`).then(r => r.data),
 

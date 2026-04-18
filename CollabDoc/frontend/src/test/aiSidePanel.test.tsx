@@ -148,7 +148,7 @@ describe('AISidePanel', () => {
         handlers.onEvent({ type: 'chunk', id: 'c1', text: 'partial' })
         await new Promise<void>(resolve => {
           cancelStream = resolve
-          signal?.addEventListener('abort', resolve)
+          signal?.addEventListener('abort', () => resolve())
         })
       },
     )

@@ -10,6 +10,7 @@ import './styles/index.css'
 
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const DocumentPage = lazy(() => import('./pages/DocumentPage'))
+const ShareRedeem = lazy(() => import('./pages/ShareRedeem'))
 
 export default function App() {
   const bootstrap = useAuthStore(s => s.bootstrap)
@@ -47,6 +48,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            <Route path="/share/:token" element={<ShareRedeem />} />
             <Route path="/404" element={<NotFound />} />
             <Route path="*" element={<Navigate to="/404" replace />} />
           </Routes>

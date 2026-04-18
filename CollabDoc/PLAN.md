@@ -2,7 +2,7 @@
 
 Shared working document for the team. Update checkboxes as work lands. Add notes under a task rather than deleting it — the history is useful for the deviation report.
 
-Last updated: 2026-04-18 (Phase 6 frontend complete; Anel's AI backend PR #1 reviewed — coordination items updated)
+Last updated: 2026-04-18 (Phase 6 frontend complete; Anel's AI backend PR #1 reviewed — coordination items updated. Phase 7 kickoff: `/share/:token` landing page + frontend `.env.example` in.)
 
 ---
 
@@ -44,7 +44,7 @@ Cross-cutting (tests, docs, demo) is shared.
 
 - [ ] Confirm backend implements the **`y-websocket` wire protocol** — a Python option is [`ypy-websocket`](https://github.com/y-crdt/ypy-websocket). Client uses `y-websocket@^3` against `ws://<host>/ws/<docId>?token=<jwt>`.
 - [ ] Agree on **awareness channel** — same WS, separate message type.
-- [x] Agree on **share-by-link** endpoint shape: client now expects `GET /documents/:id/share-links` (list), `POST /documents/:id/share-links` body `{ role, expires_in_hours: number | null }` → `ShareLink { token, role, created_at, expires_at: string | null, created_by }`, and `DELETE /documents/:id/share-links/:token`. Public landing route at `/share/:token` (frontend redeems token by hitting backend — Yintong to confirm endpoint shape for redemption).
+- [x] Agree on **share-by-link** endpoint shape: client now expects `GET /documents/:id/share-links` (list), `POST /documents/:id/share-links` body `{ role, expires_in_hours: number | null }` → `ShareLink { token, role, created_at, expires_at: string | null, created_by }`, and `DELETE /documents/:id/share-links/:token`. Public landing route at `/share/:token` is wired (`pages/ShareRedeem.tsx`) — unauthed users bounce to `/login` with `from` state and come back automatically. **Action for Yintong**: confirm / implement `POST /share-links/:token/redeem` → `Document` (adds caller as collaborator with the token's role, 404 if expired/revoked). Frontend currently calls this shape.
 - [ ] Confirm backend exposes **`PATCH /documents/:id/collaborators/:userId`** (body `{ role }`) and **`DELETE /documents/:id/collaborators/:userId`** — both return the updated `Document`. Used by ShareModal access list.
 - [x] **AI SSE format agreed** (Anel PR #1): backend streams `{ request_id, operation, delta, done }`. Frontend adapter in `api/ai.ts` translates to internal events; paragraph-splits on `done: true` for per-paragraph partial accept (bonus #4). Endpoints: `POST /ai/rewrite/stream`, `POST /ai/summarize/stream`, `GET /ai/history/:docId?user_id=`, `POST /ai/generations/:id/cancel`. **Action for Yintong**: mount `app.ai.router` in `main.py` at `/api/v1`.
 - [ ] Branch/PR strategy: feature branches + PRs with reviews. Rubric flags "single final commit" as a red flag.
@@ -97,6 +97,7 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 - [x] **Access list**: owner row first labeled "(you)"; per-collaborator role select + Remove button (owner-only). Calls new `PATCH /documents/:id/collaborators/:userId` and `DELETE /documents/:id/collaborators/:userId`. _Backend endpoints need to be implemented by Yintong._ Owner: Alexander. Partner: Yintong.
 - [x] **Share-by-link** (bonus #3): `components/ShareLinksPanel.tsx`. Create with role + expiry (24h/7d/30d/never), copy with `navigator.clipboard`, optimistic revoke (link disappears immediately, restores on failure). Hits `GET/POST/DELETE /documents/:id/share-links[/:token]`. _Backend endpoints need to be implemented by Yintong._ Owner: Alexander. Partner: Yintong.
 - [x] Tests: 10 ShareModal tests (invite + role picker + role change + remove + non-owner read-only + invite error) and 7 ShareLinksPanel tests (empty state, render, create, optimistic revoke, restore-on-failure, copy affordance, cancel-confirm). (17 new tests, 74/74 total passing) Owner: Alexander.
+- [x] **Share-link redeem landing page** (completes bonus #3): `pages/ShareRedeem.tsx` at `/share/:token`. Unauthed users are redirected to `/login` with `from` state (Login + Register both propagate `from` so register-then-come-back works). Authed users call `POST /share-links/:token/redeem` and are navigated to the document; invalid/expired tokens show an error card with a link back to dashboard. 4 new tests (unauthed redirect, success navigate, error card, loading state). Owner: Alexander. Partner: Yintong.
 
 ### Phase 6 — AI suggestion UI
 
@@ -117,6 +118,7 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 - [ ] **Module READMEs**: short purpose note in each `src/` folder. Owner: Yintong.
 - [ ] **DEVIATIONS.md**: update as we diverge from A1. Remove the "LWW instead of CRDT" row once Yjs is in. Owner: Yintong.
 - [ ] **.env.example**: documented. Owner: Yintong. Partner: Anel.
+  - [x] Frontend `.env.example` added at `frontend/.env.example` (`VITE_API_URL`, `VITE_WS_URL`; optional — dev proxy covers the default case). Owner: Alexander.
 
 ### Phase 8 — Demo prep
 

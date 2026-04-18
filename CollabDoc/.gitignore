@@ -33,3 +33,4 @@ DS_Store
 
 # Claude context
 CLAUDE_SYSTEM_PROMPT.md
+.claude/settings.json
