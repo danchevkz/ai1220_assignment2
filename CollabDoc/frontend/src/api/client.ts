@@ -41,12 +41,64 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config
 })
 
-// Flag to prevent infinite refresh loops
-let isRefreshing = false
-let refreshQueue: Array<(token: string) => void> = []
+// Shared in-flight refresh so concurrent 401s (axios and SSE) coalesce
+// into a single /auth/refresh call.
+let refreshInFlight: Promise<string> | null = null
+
+// Perform a token refresh using the stored refresh token, update in-memory
+// state, and broadcast `auth:tokenRefreshed` so non-axios consumers (SSE,
+// WebSocket) can pick up the new token. Throws when no refresh token is
+// available or the endpoint rejects.
+export function refreshAccessToken(): Promise<string> {
+  if (refreshInFlight) return refreshInFlight
+  const p = (async () => {
+    const rt = getRefreshToken()
+    if (!rt) throw new Error('No refresh token')
+    const { data } = await axios.post<{ access_token: string; refresh_token?: string }>(
+      `${BASE_URL}/auth/refresh`,
+      { refresh_token: rt },
+    )
+    setAccessToken(data.access_token)
+    if (data.refresh_token) setRefreshToken(data.refresh_token)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('auth:tokenRefreshed', {
+          detail: { accessToken: data.access_token },
+        }),
+      )
+    }
+    return data.access_token
+  })()
+  refreshInFlight = p
+  // Clear the in-flight slot once settled so the next expiry can refresh again.
+  // Swallow rejection on the derived handle so it doesn't surface as an
+  // unhandled rejection; the original promise is what callers await.
+  p.catch(() => { /* surfaced via awaited promise */ }).finally(() => {
+    if (refreshInFlight === p) refreshInFlight = null
+  })
+  return p
+}
+
+// Fire-and-clear the logout signal so axios, SSE and the collaboration
+// provider all react identically on unrecoverable auth failures.
+export function triggerLogout() {
+  clearTokens()
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('auth:logout'))
+  }
+}
+
+// Queue of axios requests waiting on the in-flight refresh.
+type QueueEntry = { resolve: (token: string) => void; reject: (err: unknown) => void }
+let refreshQueue: QueueEntry[] = []
 
 function processQueue(newToken: string) {
-  refreshQueue.forEach(cb => cb(newToken))
+  refreshQueue.forEach(e => e.resolve(newToken))
+  refreshQueue = []
+}
+
+function rejectQueue(err: unknown) {
+  refreshQueue.forEach(e => e.reject(err))
   refreshQueue = []
 }
 
@@ -62,45 +114,34 @@ apiClient.interceptors.response.use(
 
     // Don't loop on the refresh endpoint itself
     if (original.url?.includes('/auth/refresh')) {
-      clearTokens()
-      window.dispatchEvent(new Event('auth:logout'))
+      triggerLogout()
       return Promise.reject(error)
     }
 
-    if (isRefreshing) {
+    if (refreshInFlight) {
       // Queue the request until the in-flight refresh resolves
-      return new Promise(resolve => {
-        refreshQueue.push((token: string) => {
-          original.headers.Authorization = `Bearer ${token}`
-          resolve(apiClient(original))
+      return new Promise((resolve, reject) => {
+        refreshQueue.push({
+          resolve: (token: string) => {
+            original.headers.Authorization = `Bearer ${token}`
+            resolve(apiClient(original))
+          },
+          reject,
         })
       })
     }
 
     original._retry = true
-    isRefreshing = true
 
     try {
-      const refreshToken = getRefreshToken()
-      if (!refreshToken) throw new Error('No refresh token')
-
-      const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
-        refresh_token: refreshToken,
-      })
-
-      setAccessToken(data.access_token)
-      if (data.refresh_token) setRefreshToken(data.refresh_token)
-
-      processQueue(data.access_token)
-      original.headers.Authorization = `Bearer ${data.access_token}`
+      const newToken = await refreshAccessToken()
+      processQueue(newToken)
+      original.headers.Authorization = `Bearer ${newToken}`
       return apiClient(original)
-    } catch {
-      clearTokens()
-      refreshQueue = []
-      window.dispatchEvent(new Event('auth:logout'))
+    } catch (refreshErr) {
+      rejectQueue(refreshErr)
+      triggerLogout()
       return Promise.reject(error)
-    } finally {
-      isRefreshing = false
     }
   },
 )

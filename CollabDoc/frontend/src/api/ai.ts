@@ -1,4 +1,4 @@
-import { getAccessToken } from './client'
+import { getAccessToken, refreshAccessToken, triggerLogout } from './client'
 import { apiClient } from './client'
 import type { AIAction, AIInteractionOutcome, AIStreamEvent } from '../types'
 
@@ -53,7 +53,6 @@ export async function streamSuggestion(
   signal?: AbortSignal,
   userId?: string,
 ): Promise<void> {
-  const token = getAccessToken()
   const uid = userId ?? 'anonymous'
 
   const endpoint =
@@ -70,22 +69,48 @@ export async function streamSuggestion(
       ? { text: request.source_text, context }
       : { text: request.source_text, context, max_sentences: 3, format: 'paragraph' }
 
-  let response: Response
-  try {
-    response = await fetch(`${BASE_URL}${endpoint}`, {
+  const serialized = JSON.stringify(body)
+
+  const doFetch = (token: string | null): Promise<Response> =>
+    fetch(`${BASE_URL}${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify(body),
+      body: serialized,
       signal,
     })
+
+  let response: Response
+  try {
+    response = await doFetch(getAccessToken())
   } catch (err) {
     if ((err as Error).name === 'AbortError') return
     handlers.onError?.(err as Error)
     return
+  }
+
+  // On 401, attempt a single silent refresh + retry. Mirrors the axios
+  // interceptor so SSE doesn't silently die on access-token expiry.
+  if (response.status === 401) {
+    try {
+      const newToken = await refreshAccessToken()
+      try {
+        response = await doFetch(newToken)
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return
+        handlers.onError?.(err as Error)
+        return
+      }
+    } catch {
+      // Refresh failed — unrecoverable. Tear down auth state and surface a
+      // user-facing error event; do NOT retry again.
+      triggerLogout()
+      handlers.onEvent({ type: 'error', detail: 'Session expired. Please sign in again.' })
+      return
+    }
   }
 
   if (!response.ok || !response.body) {

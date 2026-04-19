@@ -15,13 +15,10 @@ from app.schemas.ai import (
     RewriteStreamRequest,
     SummarizeStreamRequest,
 )
+from app.services.ai.prompts import REWRITE_INSTRUCTION, SUMMARIZE_INSTRUCTION
 from app.services.ai.provider import build_prompt, provider
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-
-REWRITE_INSTRUCTION = "Rewrite the input to improve clarity and tone while preserving meaning."
-SUMMARIZE_INSTRUCTION = "Summarize the input concisely."
 
 
 def require_document_for_ai(
@@ -92,7 +89,17 @@ async def stream_text(
     )
 
 
-@router.post("/rewrite/stream")
+@router.post(
+    "/rewrite/stream",
+    summary="Rewrite text via streaming AI completion",
+    description=(
+        "Streams the rewritten text back as SSE frames of the shape "
+        "`{request_id, operation, delta, done}` so the UI can render chunks "
+        "progressively. The `X-Request-ID` response header exposes the "
+        "interaction id for cancellation and outcome recording. Requires "
+        "owner or editor on the target document — viewers get 403."
+    ),
+)
 def rewrite_stream(
     payload: RewriteStreamRequest,
     response: Response,
@@ -126,7 +133,16 @@ def rewrite_stream(
     )
 
 
-@router.post("/summarize/stream")
+@router.post(
+    "/summarize/stream",
+    summary="Summarize text via streaming AI completion",
+    description=(
+        "Streams a concise summary of the input text as SSE frames in the "
+        "same `{request_id, operation, delta, done}` shape as rewrite. "
+        "`max_sentences` caps the summary length. Requires owner or editor; "
+        "viewers cannot trigger generations."
+    ),
+)
 def summarize_stream(
     payload: SummarizeStreamRequest,
     response: Response,
@@ -160,7 +176,18 @@ def summarize_stream(
     )
 
 
-@router.get("/history/{document_id}", response_model=list[AIHistoryItemRead])
+@router.get(
+    "/history/{document_id}",
+    response_model=list[AIHistoryItemRead],
+    summary="List the caller's AI interactions for a document",
+    description=(
+        "Returns AI interactions scoped to a single user on a single "
+        "document, newest first. History is intentionally per-user-per-"
+        "document — callers may only request their own `user_id`; passing "
+        "someone else's id returns 403 even if they share the document. "
+        "Viewers CAN read their own history."
+    ),
+)
 def ai_history(
     document_id: str,
     user_id: str,
@@ -191,7 +218,17 @@ def ai_history(
     ]
 
 
-@router.post("/generations/{interaction_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/generations/{interaction_id}/cancel",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Cancel an in-flight AI generation",
+    description=(
+        "Marks the interaction as cancel-requested; the streaming loop "
+        "notices on its next tick and tears the SSE stream down. Only the "
+        "user who started the generation may cancel it. Returns 202 (accepted "
+        "for processing) rather than 200 because cancellation is cooperative."
+    ),
+)
 def cancel_generation(
     interaction_id: str,
     current_user: UserRecord = Depends(get_current_user),
@@ -212,7 +249,17 @@ def cancel_generation(
     return {"status": "cancelled"}
 
 
-@router.patch("/generations/{interaction_id}/outcome", response_model=AIHistoryItemRead)
+@router.patch(
+    "/generations/{interaction_id}/outcome",
+    response_model=AIHistoryItemRead,
+    summary="Record how the user handled an AI generation",
+    description=(
+        "Records whether the user accepted, partially accepted, rejected, or "
+        "regenerated the AI output, plus the actual text applied. Feeds the "
+        "history drawer's outcome badges and future analytics. Only the user "
+        "who owns the interaction may update it; viewers cannot."
+    ),
+)
 def record_outcome(
     interaction_id: str,
     payload: RecordOutcomeRequest,

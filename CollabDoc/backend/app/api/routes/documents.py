@@ -178,7 +178,17 @@ def live_version_for(doc: DocumentRecord, snapshot: bytes | None) -> VersionReco
     return live_version
 
 
-@router.get("", response_model=list[DocumentSummaryRead])
+@router.get(
+    "",
+    response_model=list[DocumentSummaryRead],
+    summary="List documents visible to the caller",
+    description=(
+        "Returns every document where the caller is owner, editor, or viewer, "
+        "sorted by `updated_at` descending. Each entry includes the caller's "
+        "role on that document so the UI can gate editing actions without a "
+        "second round-trip."
+    ),
+)
 def list_documents(current_user: UserRecord = Depends(get_current_user)) -> list[DocumentSummaryRead]:
     docs = []
     for doc in store.documents.values():
@@ -189,7 +199,17 @@ def list_documents(current_user: UserRecord = Depends(get_current_user)) -> list
     return docs
 
 
-@router.post("", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DocumentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new document",
+    description=(
+        "Creates an empty document owned by the caller, seeded with an initial "
+        "v1 version record so the history drawer always has at least one entry. "
+        "Missing/blank `title` defaults to `Untitled`."
+    ),
+)
 def create_document(
     payload: CreateDocumentRequest,
     current_user: UserRecord = Depends(get_current_user),
@@ -198,14 +218,33 @@ def create_document(
     return serialize_document(doc)
 
 
-@router.get("/{document_id}", response_model=DocumentRead)
+@router.get(
+    "/{document_id}",
+    response_model=DocumentRead,
+    summary="Get a single document",
+    description=(
+        "Returns the full document record including its collaborator roster "
+        "and current REST-persisted `content`. Accessible to any collaborator "
+        "(owner/editor/viewer); non-collaborators get 403, missing ids 404."
+    ),
+)
 def get_document(document_id: str, current_user: UserRecord = Depends(get_current_user)) -> DocumentRead:
     doc = require_document(document_id)
     require_role(doc, current_user.id, {"owner", "editor", "viewer"})
     return serialize_document(doc)
 
 
-@router.patch("/{document_id}", response_model=DocumentRead)
+@router.patch(
+    "/{document_id}",
+    response_model=DocumentRead,
+    summary="Update document metadata or content",
+    description=(
+        "Partial update of `title` and/or `content`. Title edits are debounced "
+        "from the UI and don't snapshot a version; content edits do bump the "
+        "version counter and append a version record. Requires owner or "
+        "editor role — viewers get 403."
+    ),
+)
 def update_document(
     document_id: str,
     payload: UpdateDocumentRequest,
@@ -222,7 +261,15 @@ def update_document(
     return serialize_document(doc)
 
 
-@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a document",
+    description=(
+        "Permanently removes the document, its collaborators, share links, "
+        "and version history. Owner-only. Returns 204 on success."
+    ),
+)
 def delete_document(document_id: str, current_user: UserRecord = Depends(get_current_user)) -> None:
     doc = require_document(document_id)
     require_role(doc, current_user.id, {"owner"})
@@ -230,7 +277,16 @@ def delete_document(document_id: str, current_user: UserRecord = Depends(get_cur
     store.documents.pop(doc.id, None)
 
 
-@router.post("/{document_id}/share", response_model=DocumentRead)
+@router.post(
+    "/{document_id}/share",
+    response_model=DocumentRead,
+    summary="Invite an existing user as a collaborator",
+    description=(
+        "Grants the named user (looked up by username or email) the given "
+        "role on the document. Owner-only. Role must be `editor` or `viewer` "
+        "— the owner role is never assigned through this endpoint."
+    ),
+)
 def share_document(
     document_id: str,
     payload: ShareDocumentRequest,
@@ -248,7 +304,16 @@ def share_document(
     return serialize_document(doc)
 
 
-@router.patch("/{document_id}/collaborators/{user_id}", response_model=DocumentRead)
+@router.patch(
+    "/{document_id}/collaborators/{user_id}",
+    response_model=DocumentRead,
+    summary="Change a collaborator's role",
+    description=(
+        "Switches an existing collaborator between `editor` and `viewer`. "
+        "Owner-only. The document owner's role itself is not mutable through "
+        "this endpoint — attempting to change the owner's role returns 400."
+    ),
+)
 def update_collaborator(
     document_id: str,
     user_id: str,
@@ -268,7 +333,16 @@ def update_collaborator(
     return serialize_document(doc)
 
 
-@router.delete("/{document_id}/collaborators/{user_id}", response_model=DocumentRead)
+@router.delete(
+    "/{document_id}/collaborators/{user_id}",
+    response_model=DocumentRead,
+    summary="Revoke a collaborator's access",
+    description=(
+        "Removes the specified user from the document's collaborator list. "
+        "Owner-only; the owner themselves cannot be removed. Returns the "
+        "updated document so the UI can refresh the roster in-place."
+    ),
+)
 def delete_collaborator(
     document_id: str,
     user_id: str,
@@ -285,7 +359,16 @@ def delete_collaborator(
     return serialize_document(doc)
 
 
-@router.get("/{document_id}/share-links", response_model=list[ShareLinkRead])
+@router.get(
+    "/{document_id}/share-links",
+    response_model=list[ShareLinkRead],
+    summary="List active share-by-link tokens",
+    description=(
+        "Returns unexpired share links for the document, newest first. "
+        "Owner-only. Each entry includes its role, creation timestamp, and "
+        "optional expiry so the UI can render an 'expires in' label."
+    ),
+)
 def list_share_links(
     document_id: str,
     current_user: UserRecord = Depends(get_current_user),
@@ -306,7 +389,18 @@ def list_share_links(
     ]
 
 
-@router.post("/{document_id}/share-links", response_model=ShareLinkRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{document_id}/share-links",
+    response_model=ShareLinkRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Mint a new share-by-link token",
+    description=(
+        "Creates a single-role share token that any signed-in user can redeem "
+        "to join the document. Owner-only. `expires_in_hours` may be 24, 168 "
+        "(7d), 720 (30d), or null for no expiry; role must be `editor` or "
+        "`viewer`."
+    ),
+)
 def create_share_link(
     document_id: str,
     payload: CreateShareLinkRequest,
@@ -326,7 +420,16 @@ def create_share_link(
     )
 
 
-@router.delete("/{document_id}/share-links/{token}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{document_id}/share-links/{token}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke a share-by-link token",
+    description=(
+        "Invalidates a share link so it can no longer be redeemed. Already-"
+        "redeemed collaborators keep their access — use the collaborator "
+        "DELETE endpoint to remove them. Owner-only."
+    ),
+)
 def delete_share_link(
     document_id: str,
     token: str,
@@ -340,7 +443,17 @@ def delete_share_link(
     store.touch_document(doc)
 
 
-@router.post("/share-links/{token}/redeem", response_model=RedeemShareLinkResponse)
+@router.post(
+    "/share-links/{token}/redeem",
+    response_model=RedeemShareLinkResponse,
+    summary="Redeem a share link to join a document",
+    description=(
+        "Adds the caller to the document's collaborator list at the link's "
+        "role, then returns the document plus the resolved role. The owner "
+        "redeeming their own link is a no-op — they keep their `owner` role. "
+        "Expired or unknown tokens return 404."
+    ),
+)
 def redeem_share_link(token: str, current_user: UserRecord = Depends(get_current_user)) -> RedeemShareLinkResponse:
     link = store.get_share_link(token)
     if link is None:
@@ -355,7 +468,17 @@ def redeem_share_link(token: str, current_user: UserRecord = Depends(get_current
     return RedeemShareLinkResponse(document=serialize_document(doc), role=role)
 
 
-@router.get("/{document_id}/versions", response_model=list[DocumentVersionRead])
+@router.get(
+    "/{document_id}/versions",
+    response_model=list[DocumentVersionRead],
+    summary="List document versions including the live collaborative state",
+    description=(
+        "Returns the persisted version history plus, if the live Yjs room "
+        "diverges from the latest persisted snapshot, a transient in-memory "
+        "version that `restore` can still target. Read-only — the underlying "
+        "document is not mutated. Accessible to any collaborator."
+    ),
+)
 async def list_versions(
     document_id: str,
     current_user: UserRecord = Depends(get_current_user),
@@ -379,7 +502,17 @@ async def list_versions(
     return [serialize_version(version) for version in ordered]
 
 
-@router.post("/{document_id}/versions/{version_number}/restore", response_model=DocumentRead)
+@router.post(
+    "/{document_id}/versions/{version_number}/restore",
+    response_model=DocumentRead,
+    summary="Restore the document to a previous version",
+    description=(
+        "Snapshots the current live state as a new version (so nothing is "
+        "lost), then replays the target version's Yjs snapshot into the live "
+        "collaboration room so every connected client converges on the "
+        "restored content. Requires owner or editor."
+    ),
+)
 async def restore_version(
     document_id: str,
     version_number: int,
@@ -422,7 +555,7 @@ async def restore_version(
     # collaborative restore if the saved version has no snapshot (REST-only
     # version) so we don't wipe the live YDoc with empty state.
     if selected.yjs_snapshot is not None and not is_empty_yjs_snapshot(selected.yjs_snapshot):
-        await websocket_server.restore(normalize_room_name(doc.id), selected.yjs_snapshot)
+        await websocket_server.restore(normalize_room_name(f"ws/{doc.id}"), selected.yjs_snapshot)
 
     doc.content = selected.content
     _live_version_cache.pop(doc.id, None)
@@ -431,7 +564,11 @@ async def restore_version(
 
 
 async def _safe_snapshot(document_id: str) -> bytes | None:
+    # Rooms are keyed by the full websocket path (`/ws/{doc_id}`); using the
+    # bare `/{doc_id}` silently reads a non-existent sibling room and returns
+    # an empty snapshot, which silently breaks both version previews and
+    # restore.
     try:
-        return await websocket_server.snapshot(normalize_room_name(document_id))
+        return await websocket_server.snapshot(normalize_room_name(f"ws/{document_id}"))
     except Exception:
         return None

@@ -1,4 +1,5 @@
 from app.models.store import store
+from tests.conftest import ws_connect
 
 
 def register_and_login(client, username: str, email: str, password: str = "password123"):
@@ -422,7 +423,9 @@ def _make_yjs_update_message(text_value: str) -> bytes:
 
 def _read_room_state(document_id: str) -> bytes:
     """Read the current YDoc state for a document (sync wrapper around the
-    async server API)."""
+    async server API). The collaboration server keys rooms by the URL path
+    (`/ws/{doc_id}`), so we must mirror that here — snapshots keyed on a bare
+    `/{doc_id}` hit a non-existent file and silently return an empty state."""
     import asyncio
     from app.websocket.collaboration import (
         ensure_websocket_server_running,
@@ -432,9 +435,62 @@ def _read_room_state(document_id: str) -> bytes:
 
     async def go() -> bytes:
         await ensure_websocket_server_running()
-        return await websocket_server.snapshot(normalize_room_name(document_id))
+        return await websocket_server.snapshot(normalize_room_name(f"ws/{document_id}"))
 
     return asyncio.run(go())
+
+
+def _decode_room_text(document_id: str) -> str:
+    """Decode the persisted ystore snapshot into a plain string. Reads via
+    `_read_room_state` (file-backed, thread-safe) to sidestep the fact that a
+    YDoc owned by the ASGI server thread is not safe to read from the test
+    thread."""
+    import y_py as Y
+
+    snapshot = _read_room_state(document_id)
+    doc = Y.YDoc()
+    if snapshot:
+        try:
+            Y.apply_update(doc, snapshot)
+        except Exception:
+            return ""
+    return str(doc.get_text("default"))
+
+
+def _wait_for_room_text(document_id: str, expected: str, timeout_s: float = 2.0) -> str:
+    """Poll the persisted room text until `expected` is visible in the default
+    Y.Text or the timeout elapses. Returns the final observed text. Replaces
+    blocking `ws.receive_bytes()` loops that deadlock when the sender is the
+    only client in the room. Polls the underlying ystore file directly (no
+    TestClient/portal hop) so a new event loop isn't created each iteration."""
+    import time
+    import y_py as Y
+    from ypy_websocket.ystore import FileYStore
+
+    from app.core.config import settings
+
+    # Mirror PersistentWebsocketServer._store_path for the /ws/{doc_id} room.
+    path = settings.ystore_dir / f"__ws__{document_id}.bin"
+
+    deadline = time.monotonic() + timeout_s
+    text = ""
+    while time.monotonic() < deadline:
+        if path.exists():
+            doc = Y.YDoc()
+
+            async def _go() -> None:
+                try:
+                    await FileYStore(str(path)).apply_updates(doc)
+                except Exception:
+                    pass
+
+            import asyncio
+            asyncio.run(_go())
+            text = str(doc.get_text("default"))
+            if expected in text:
+                return text
+        time.sleep(0.05)
+    return text
 
 
 def _inject_into_room(document_id: str, text_value: str) -> None:
@@ -451,7 +507,10 @@ def _inject_into_room(document_id: str, text_value: str) -> None:
 
     async def go() -> None:
         await ensure_websocket_server_running()
-        room = await websocket_server.get_room(normalize_room_name(document_id))
+        # Room names mirror the ASGI path (`/ws/{doc_id}`); using a bare
+        # `/{doc_id}` silently creates a *different* room that no client ever
+        # sees, so the test mutation never reaches the real collaboration doc.
+        room = await websocket_server.get_room(normalize_room_name(f"ws/{document_id}"))
         text = room.ydoc.get_text("default")
         with room.ydoc.begin_transaction() as txn:
             text.insert(txn, 0, text_value)
@@ -475,7 +534,7 @@ def test_viewer_websocket_can_connect_and_read(client):
         headers=owner_headers,
     )
 
-    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(viewer_headers)}") as ws:
+    with ws_connect(client, f"/ws/{document_id}?token={_token_for(viewer_headers)}") as ws:
         first = ws.receive_bytes()
         # Server greets with a SYNC message (sync_step1) so the read path works.
         assert first[0] == 0
@@ -497,7 +556,7 @@ def test_viewer_yjs_mutation_is_dropped_server_side(client):
     )
 
     payload = "VIEWER_INJECTED_MUTATION"
-    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(viewer_headers)}") as ws:
+    with ws_connect(client, f"/ws/{document_id}?token={_token_for(viewer_headers)}") as ws:
         ws.receive_bytes()  # drain server's sync_step1
         ws.send_bytes(_make_yjs_update_message(payload))
 
@@ -524,21 +583,16 @@ def test_editor_yjs_mutation_propagates(client):
     )
 
     payload = "EDITOR_WROTE_THIS"
-    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(editor_headers)}") as ws:
+    with ws_connect(client, f"/ws/{document_id}?token={_token_for(editor_headers)}") as ws:
         ws.receive_bytes()  # drain server's sync_step1
         ws.send_bytes(_make_yjs_update_message(payload))
-        # Pull a few frames so the server has time to process before disconnect.
-        try:
-            for _ in range(3):
-                ws.receive_bytes()
-        except Exception:
-            pass
+        # Hold the connection open briefly so the server's task group can
+        # drain + apply the frame before disconnect tears the room down.
+        import time as _t
+        _t.sleep(0.25)
 
-    import y_py as Y
-    server_state = _read_room_state(document_id)
-    server_doc = Y.YDoc()
-    Y.apply_update(server_doc, server_state)
-    assert payload in str(server_doc.get_text("default"))
+    text = _wait_for_room_text(document_id, payload, timeout_s=5.0)
+    assert payload in text, f"editor mutation missing after propagate: {text!r}"
 
 
 def test_owner_yjs_mutation_propagates(client):
@@ -549,20 +603,14 @@ def test_owner_yjs_mutation_propagates(client):
     ).json()["id"]
 
     payload = "OWNER_WROTE_THIS"
-    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(owner_headers)}") as ws:
+    with ws_connect(client, f"/ws/{document_id}?token={_token_for(owner_headers)}") as ws:
         ws.receive_bytes()
         ws.send_bytes(_make_yjs_update_message(payload))
-        try:
-            for _ in range(3):
-                ws.receive_bytes()
-        except Exception:
-            pass
+        import time as _t
+        _t.sleep(0.25)
 
-    import y_py as Y
-    server_state = _read_room_state(document_id)
-    server_doc = Y.YDoc()
-    Y.apply_update(server_doc, server_state)
-    assert payload in str(server_doc.get_text("default"))
+    text = _wait_for_room_text(document_id, payload, timeout_s=5.0)
+    assert payload in text, f"owner mutation missing after propagate: {text!r}"
 
 
 # ── M3: Version history must reflect collaborative state ─────────────────────
@@ -671,7 +719,7 @@ def test_websocket_requires_access_token_and_document_access(client):
     document_id = client.post("/api/v1/documents", json={"title": "Realtime"}, headers=owner_headers).json()["id"]
     access_token = owner_headers["Authorization"].split(" ", 1)[1]
 
-    with client.websocket_connect(f"/ws/{document_id}?token={access_token}") as websocket:
+    with ws_connect(client, f"/ws/{document_id}?token={access_token}") as websocket:
         message = websocket.receive_bytes()
         assert message[0] == 0
 
@@ -681,7 +729,222 @@ def test_websocket_requires_access_token_and_document_access(client):
     )
     other_token = denied.json()["access_token"]
     try:
-        client.websocket_connect(f"/ws/{document_id}?token={other_token}")
+        with ws_connect(client, f"/ws/{document_id}?token={other_token}"):
+            pass
         assert False, "Expected websocket handshake failure"
     except Exception:
         pass
+
+
+# ── Permission gaps: REST-level authorization on write paths ────────────────
+#
+# These tests cover the owner-only and viewer-denial contracts that the WS
+# collaboration layer depends on — the collab filter only works if the REST
+# entry points also refuse writes from non-privileged roles. They were not
+# exercised before, which left the server accepting mutations it shouldn't in
+# principle have.
+
+def test_non_owner_cannot_delete_document(client):
+    owner, owner_headers = register_and_login(client, "del_owner", "del_owner@example.com")
+    editor, editor_headers = register_and_login(client, "del_editor", "del_editor@example.com")
+    viewer, viewer_headers = register_and_login(client, "del_viewer", "del_viewer@example.com")
+    outsider, outsider_headers = register_and_login(client, "del_out", "del_out@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "DelGuard"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": editor["email"], "role": "editor"},
+        headers=owner_headers,
+    )
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    assert client.delete(f"/api/v1/documents/{document_id}", headers=editor_headers).status_code == 403
+    assert client.delete(f"/api/v1/documents/{document_id}", headers=viewer_headers).status_code == 403
+    assert client.delete(f"/api/v1/documents/{document_id}", headers=outsider_headers) .status_code in (403, 404)
+    # Owner still can.
+    assert client.delete(f"/api/v1/documents/{document_id}", headers=owner_headers).status_code == 204
+
+
+def test_viewer_cannot_patch_document_content(client):
+    """Viewers must not be able to mutate content via REST — even though the WS
+    filter drops Yjs writes, the REST surface is a separate path that must also
+    hold the line."""
+    owner, owner_headers = register_and_login(client, "patch_owner", "patch_owner@example.com")
+    viewer, viewer_headers = register_and_login(client, "patch_viewer", "patch_viewer@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "PatchGuard"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    # Viewer cannot change title or content.
+    resp = client.patch(
+        f"/api/v1/documents/{document_id}",
+        json={"title": "hacked", "content": "<p>bad</p>"},
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403, resp.text
+
+    # Confirm the document did not change.
+    current = client.get(f"/api/v1/documents/{document_id}", headers=owner_headers).json()
+    assert current["title"] == "PatchGuard"
+    assert current["content"] != "<p>bad</p>"
+
+
+def test_viewer_cannot_restore_version(client):
+    """Restoring a version mutates the live collaborative state — the write
+    guard must refuse viewers even for a valid version id."""
+    owner, owner_headers = register_and_login(client, "restore_guard_owner", "rgo@example.com")
+    viewer, viewer_headers = register_and_login(client, "restore_guard_viewer", "rgv@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "RestoreGuard"}, headers=owner_headers
+    ).json()["id"]
+    client.patch(
+        f"/api/v1/documents/{document_id}",
+        json={"content": "<p>first</p>"},
+        headers=owner_headers,
+    )
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+    versions = client.get(
+        f"/api/v1/documents/{document_id}/versions", headers=owner_headers
+    ).json()
+    target = versions[0]["version"]
+
+    resp = client.post(
+        f"/api/v1/documents/{document_id}/versions/{target}/restore",
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_non_owner_cannot_manage_collaborators(client):
+    """Sharing, role updates, and collaborator removal are owner-only — editors
+    and viewers must get 403 on each endpoint, not silent success or a partial
+    effect."""
+    owner, owner_headers = register_and_login(client, "mgr_owner", "mgro@example.com")
+    editor, editor_headers = register_and_login(client, "mgr_editor", "mgre@example.com")
+    viewer, viewer_headers = register_and_login(client, "mgr_viewer", "mgrv@example.com")
+    other, _ = register_and_login(client, "mgr_other", "mgrother@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "MgmtGuard"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": editor["email"], "role": "editor"},
+        headers=owner_headers,
+    )
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    share_body = {"username_or_email": other["email"], "role": "editor"}
+    # POST /share: not allowed for editor or viewer
+    assert client.post(
+        f"/api/v1/documents/{document_id}/share", json=share_body, headers=editor_headers
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/documents/{document_id}/share", json=share_body, headers=viewer_headers
+    ).status_code == 403
+
+    # PATCH /collaborators/{uid}: only owner may change a role
+    patch_body = {"role": "viewer"}
+    assert client.patch(
+        f"/api/v1/documents/{document_id}/collaborators/{editor['id']}",
+        json=patch_body,
+        headers=editor_headers,
+    ).status_code == 403
+    assert client.patch(
+        f"/api/v1/documents/{document_id}/collaborators/{editor['id']}",
+        json=patch_body,
+        headers=viewer_headers,
+    ).status_code == 403
+
+    # DELETE /collaborators/{uid}: only owner may remove
+    assert client.delete(
+        f"/api/v1/documents/{document_id}/collaborators/{viewer['id']}",
+        headers=editor_headers,
+    ).status_code == 403
+    assert client.delete(
+        f"/api/v1/documents/{document_id}/collaborators/{viewer['id']}",
+        headers=viewer_headers,
+    ).status_code == 403
+
+    # Owner can still perform all three operations.
+    assert client.post(
+        f"/api/v1/documents/{document_id}/share", json=share_body, headers=owner_headers
+    ).status_code == 200
+    assert client.patch(
+        f"/api/v1/documents/{document_id}/collaborators/{editor['id']}",
+        json=patch_body,
+        headers=owner_headers,
+    ).status_code == 200
+    assert client.delete(
+        f"/api/v1/documents/{document_id}/collaborators/{viewer['id']}",
+        headers=owner_headers,
+    ).status_code == 200
+
+
+def test_non_owner_cannot_manage_share_links(client):
+    """Share-link surface (create/list/delete) is owner-only for the same reason
+    as collaborator management — it grants access without owner consent if left
+    open."""
+    owner, owner_headers = register_and_login(client, "sl_owner", "slo@example.com")
+    editor, editor_headers = register_and_login(client, "sl_editor", "sle@example.com")
+    viewer, viewer_headers = register_and_login(client, "sl_viewer", "slv@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "LinksGuard"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": editor["email"], "role": "editor"},
+        headers=owner_headers,
+    )
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    create_body = {"role": "viewer", "expires_in_hours": 24}
+    assert client.post(
+        f"/api/v1/documents/{document_id}/share-links", json=create_body, headers=editor_headers
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/documents/{document_id}/share-links", json=create_body, headers=viewer_headers
+    ).status_code == 403
+    assert client.get(
+        f"/api/v1/documents/{document_id}/share-links", headers=editor_headers
+    ).status_code == 403
+    assert client.get(
+        f"/api/v1/documents/{document_id}/share-links", headers=viewer_headers
+    ).status_code == 403
+
+    # Owner creates the link — editor/viewer still can't delete it.
+    created = client.post(
+        f"/api/v1/documents/{document_id}/share-links", json=create_body, headers=owner_headers
+    )
+    assert created.status_code == 201, created.text
+    token = created.json()["token"]
+    assert client.delete(
+        f"/api/v1/documents/{document_id}/share-links/{token}", headers=editor_headers
+    ).status_code == 403
+    assert client.delete(
+        f"/api/v1/documents/{document_id}/share-links/{token}", headers=viewer_headers
+    ).status_code == 403
+    assert client.delete(
+        f"/api/v1/documents/{document_id}/share-links/{token}", headers=owner_headers
+    ).status_code == 204

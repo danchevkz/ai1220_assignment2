@@ -111,7 +111,6 @@ export default function Editor({
     if (content !== current) {
       editor.commands.setContent(content, false)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, editor, isCollab])
 
   useEffect(() => {

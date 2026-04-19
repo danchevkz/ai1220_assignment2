@@ -28,16 +28,22 @@ export interface YjsListener {
 // Owns the lifecycle of all three and exposes a minimal, testable surface.
 export class YjsProvider {
   readonly doc: Y.Doc
-  readonly wsProvider: WebsocketProvider
+  wsProvider: WebsocketProvider
   readonly persistence: IndexeddbPersistence | null
 
   private listeners: YjsListener[] = []
   private status: ConnectionStatus = 'offline'
   private synced = false
   private destroyed = false
+  private readonly documentId: string
+  private readonly wsUrl: string
+  private token: string
 
   constructor(opts: YjsProviderOptions) {
     this.doc = new Y.Doc()
+    this.documentId = opts.documentId
+    this.wsUrl = opts.wsUrl
+    this.token = opts.token
 
     // IndexedDB persistence — gives us offline editing for free.
     // The Y.Doc is hydrated from IDB before the WS even connects.
@@ -46,23 +52,40 @@ export class YjsProvider {
         ? new IndexeddbPersistence(`collabdoc:${opts.documentId}`, this.doc)
         : null
 
+    this.wsProvider = this.buildWsProvider()
+  }
+
+  private buildWsProvider(): WebsocketProvider {
     // WebsocketProvider appends the room name to the URL. We pass the JWT in
     // `params` so the backend can authorize the upgrade in `?token=`.
-    this.wsProvider = new WebsocketProvider(opts.wsUrl, opts.documentId, this.doc, {
-      params: { token: opts.token },
+    const wsp = new WebsocketProvider(this.wsUrl, this.documentId, this.doc, {
+      params: { token: this.token },
       connect: true,
     })
 
-    this.wsProvider.on('status', (e: { status: 'connecting' | 'connected' | 'disconnected' }) => {
+    wsp.on('status', (e: { status: 'connecting' | 'connected' | 'disconnected' }) => {
       this.setStatus(e.status)
     })
 
-    this.wsProvider.on('sync', (isSynced: boolean) => {
+    wsp.on('sync', (isSynced: boolean) => {
       if (isSynced && !this.synced) {
         this.synced = true
         this.listeners.forEach(l => l.onSynced?.())
       }
     })
+
+    return wsp
+  }
+
+  // Swap in a fresh access token by tearing down the old WebsocketProvider
+  // and reconnecting with the new one. The Y.Doc is preserved so CRDT state
+  // survives the reconnect.
+  updateToken(newToken: string) {
+    if (this.destroyed) return
+    if (newToken === this.token) return
+    this.token = newToken
+    try { this.wsProvider.destroy() } catch { /* noop */ }
+    this.wsProvider = this.buildWsProvider()
   }
 
   get awareness() {

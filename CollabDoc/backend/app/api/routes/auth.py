@@ -23,7 +23,17 @@ def serialize_user(user: UserRecord) -> UserRead:
     )
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user",
+    description=(
+        "Creates a new user account with a bcrypt-hashed password. "
+        "Username and email must both be unique across existing accounts; "
+        "a duplicate returns 400. On success returns the public user profile."
+    ),
+)
 def register(payload: RegisterRequest) -> UserRead:
     try:
         user = store.create_user(
@@ -36,7 +46,17 @@ def register(payload: RegisterRequest) -> UserRead:
     return serialize_user(user)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Exchange credentials for a token pair",
+    description=(
+        "Verifies username/password and returns a short-lived access token "
+        "(20 minutes) plus a refresh token (7 days). Returns 401 on any "
+        "credential mismatch without distinguishing between unknown user and "
+        "bad password."
+    ),
+)
 def login(payload: LoginRequest) -> TokenResponse:
     user = store.find_user(payload.username)
     if user is None or not verify_password(payload.password, user.password_hash):
@@ -47,7 +67,17 @@ def login(payload: LoginRequest) -> TokenResponse:
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Rotate tokens using a refresh token",
+    description=(
+        "Validates a refresh-type JWT and issues a brand-new access/refresh "
+        "pair for the same user. Access tokens presented here are rejected "
+        "(token type must be `refresh`). Returns 401 on expired, malformed, "
+        "or wrong-type tokens."
+    ),
+)
 def refresh(payload: RefreshRequest) -> TokenResponse:
     try:
         claims = decode_token(payload.refresh_token)
@@ -64,6 +94,14 @@ def refresh(payload: RefreshRequest) -> TokenResponse:
     )
 
 
-@router.get("/me", response_model=UserRead)
+@router.get(
+    "/me",
+    response_model=UserRead,
+    summary="Return the authenticated user's profile",
+    description=(
+        "Resolves the bearer token to the owning user record. Used by the "
+        "frontend on boot to hydrate auth state after a browser reload."
+    ),
+)
 def me(current_user: UserRecord = Depends(get_current_user)) -> UserRead:
     return serialize_user(current_user)

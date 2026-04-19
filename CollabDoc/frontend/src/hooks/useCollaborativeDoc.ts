@@ -53,7 +53,24 @@ export function useCollaborativeDoc(
       onSynced: () => setSynced(true),
     })
 
+    // Swap the WS connection to use the fresh token rather than keep using
+    // a stale one after silent refresh. Preserves Y.Doc state across the swap.
+    const onTokenRefreshed = (e: Event) => {
+      const detail = (e as CustomEvent<{ accessToken?: string }>).detail
+      const newToken = detail?.accessToken ?? getAccessToken()
+      if (newToken) p.updateToken(newToken)
+    }
+    // On logout, tear the provider down immediately — don't wait for the
+    // router unmount, since a dead connection can keep retrying with a
+    // cleared token.
+    const onLogout = () => { p.destroy() }
+
+    window.addEventListener('auth:tokenRefreshed', onTokenRefreshed)
+    window.addEventListener('auth:logout', onLogout)
+
     return () => {
+      window.removeEventListener('auth:tokenRefreshed', onTokenRefreshed)
+      window.removeEventListener('auth:logout', onLogout)
       unsub()
       p.destroy()
       if (currentRef.current === p) {

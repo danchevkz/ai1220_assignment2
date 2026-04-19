@@ -62,13 +62,15 @@ test.describe('golden path', () => {
     await page.getByRole('button', { name: /^history$/i }).click()
     await expect(page.getByRole('dialog', { name: /version history/i })).toBeVisible()
 
-    // At least one version should be created on first history open.
+    // The v1 snapshot is created at document creation (empty content), and
+    // opening /versions triggers a second snapshot of the live WS room after
+    // the Yjs edit above — so we expect ≥1 version item, typically 2.
     const versionItems = page.locator('.version-item')
-    await expect(versionItems).toHaveCount(1, { timeout: 10_000 })
+    await expect(versionItems.first()).toBeVisible({ timeout: 10_000 })
 
-    // Restoring a single version should also succeed (dialog closes).
+    // Restoring the most recent version should succeed (dialog closes).
     page.once('dialog', d => d.accept())
-    await page.getByRole('button', { name: /restore this version/i }).click()
+    await page.getByRole('button', { name: /restore this version/i }).first().click()
     await expect(page.getByRole('dialog', { name: /version history/i })).not.toBeVisible({
       timeout: 10_000,
     })

@@ -17,7 +17,7 @@ Team: Alexander Danchev (Frontend & Collaboration) · Anel Murat (AI Assistant) 
 | Auth | `python-jose` (JWT, HS256) + `passlib[bcrypt]` | 20 min access · 7 day refresh |
 | Collab server | `ypy-websocket` (ASGI mount under `/ws`) | File-backed `FileYStore` for room persistence |
 | AI streaming | FastAPI `StreamingResponse` (Server-Sent Events) | `MockLLMProvider` ships in-tree; swap via `app/services/ai/provider.py` |
-| Tests | `pytest` (backend) · `vitest` + React Testing Library (frontend) · `@playwright/test` (E2E) | 106 unit + 8 E2E specs |
+| Tests | `pytest` (backend) · `vitest` + React Testing Library (frontend) · `@playwright/test` (E2E) | 76 backend + 138 frontend unit + 8 E2E specs |
 
 The system is split into three FastAPI routers mounted under `/api/v1` (`auth`, `documents`, `ai`) plus a Yjs WebSocket ASGI app at `/ws/:docId`. The frontend talks REST over axios and WS through the native `y-websocket` client.
 
@@ -123,6 +123,12 @@ AI writing suggestions run alongside live collaboration, which introduces two ed
 
 Partial acceptance (bonus #4) is implemented by splitting the streamed output into paragraph-sized chunks when the server emits `done: true`. The UI renders per-chunk Accept/Reject buttons so a user can keep the parts they like and leave the rest of the document untouched. The reducer lives in [`src/ai/aiState.ts`](frontend/src/ai/aiState.ts); the SSE consumer is [`src/api/ai.ts`](frontend/src/api/ai.ts).
 
+### AI history scope
+
+AI history is **per-user within a document**, not shared across collaborators. A record carries both `document_id` and `user_id`, and `GET /api/v1/ai/history/:docId` rejects requests for any `user_id` other than the caller's (see [`backend/app/api/routes/ai.py`](backend/app/api/routes/ai.py) — the `user_id != current_user.id` check). The rationale: prompts and rejected drafts are personal — two collaborators editing the same document each keep their own experimentation log, and neither sees the other's unshipped ideas. Only accepted suggestions land in the Y.Doc (via normal Yjs edits), which is the shared surface.
+
+The active AI implementation lives under [`backend/app/api/routes/ai.py`](backend/app/api/routes/ai.py) (router) and [`backend/app/services/ai/provider.py`](backend/app/services/ai/provider.py) (LLM abstraction). There is no other AI code path in the backend.
+
 ---
 
 ## API overview
@@ -152,7 +158,8 @@ FastAPI's auto-generated docs are at http://localhost:8000/docs (OpenAPI JSON at
 | POST | `/api/v1/ai/rewrite/stream` | ✓ | SSE stream: rewrite text |
 | POST | `/api/v1/ai/summarize/stream` | ✓ | SSE stream: summarize text |
 | POST | `/api/v1/ai/generations/:id/cancel` | ✓ | Cancel in-flight generation |
-| GET | `/api/v1/ai/history/:docId?user_id=` | ✓ | Per-user AI history |
+| PATCH | `/api/v1/ai/generations/:id/outcome` | ✓ | Record accept / reject / partial / cancelled for a generation |
+| GET | `/api/v1/ai/history/:docId?user_id=` | ✓ | Per-user AI history (caller can only read their own — see AI history scope) |
 | WS | `/ws/:docId?token=` | JWT | Yjs real-time collaboration |
 
 ---
@@ -197,7 +204,7 @@ Module-level READMEs live alongside the code (e.g. [`frontend/src/collab/README.
 | Layer | Tooling | Coverage focus |
 |-------|---------|----------------|
 | Backend unit | `pytest` | Auth, document CRUD, sharing, versions, AI stream adapter |
-| Frontend unit | `vitest` + RTL | Auth forms, editor toolbar, YjsProvider state machine, awareness reducer, AI reducer + SSE consumer, ShareModal, ShareLinksPanel |
+| Frontend unit | `vitest` + RTL | Auth forms, editor toolbar, YjsProvider state machine, awareness reducer, AI reducer + SSE consumer, AI side panel (accept / reject / partial → `recordOutcome`), SSE 401 refresh/retry + logout, axios 401 interceptor, ShareModal, ShareLinksPanel |
 | E2E | `@playwright/test` | Register → dashboard, protected routes, golden path (rich text + AI rewrite + version history), two-browser-context CRDT sync via share link |
 
 E2E runs with a single worker because the in-memory backend store is process-global.

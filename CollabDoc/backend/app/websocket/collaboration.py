@@ -86,18 +86,30 @@ async def stop_websocket_server() -> None:
     if getattr(websocket_server, "_task_group", None) is None:
         return
 
-    # Best-effort shutdown: during FastAPI/TestClient lifespan teardown we can
-    # end up in a different task context than the AnyIO cancel scope that
-    # created the websocket server. Reset local room state without awaiting the
-    # original task-group exit path so app shutdown stays clean.
     for room in list(websocket_server.rooms.values()):
         try:
             room.stop()
         except Exception:
             pass
+
+    # Prefer the server's own shutdown so the AnyIO task group and exit stack
+    # unwind cleanly in production (uvicorn lifespan). Fall back to a hard reset
+    # if we're on a different task/loop than the one that opened the server
+    # (TestClient teardown hits this path — `anyio.Lock` is tied to the now-
+    # closed loop, so `__aexit__` raises).
+    try:
+        await websocket_server.__aexit__(None, None, None)
+    except Exception:
+        pass
+
     websocket_server.rooms = {}
     websocket_server._task_group = None
     websocket_server._started = None
+    if hasattr(websocket_server, "_exit_stack"):
+        try:
+            delattr(websocket_server, "_exit_stack")
+        except Exception:
+            pass
 
 
 def is_yjs_mutation(message: bytes) -> bool:
