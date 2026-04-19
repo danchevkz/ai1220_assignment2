@@ -15,12 +15,20 @@ from app.services.ai.provider import provider
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
-def require_document_for_ai(document_id: str, current_user: UserRecord) -> DocumentRecord:
+def require_document_for_ai(
+    document_id: str,
+    current_user: UserRecord,
+    *,
+    allow_viewer: bool = False,
+) -> DocumentRecord:
     doc = store.get_document(document_id)
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    if current_user.id not in doc.collaborators:
+    role = doc.collaborators.get(current_user.id)
+    if role is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if role == "viewer" and not allow_viewer:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Viewers cannot use AI features")
     return doc
 
 
@@ -121,7 +129,7 @@ def ai_history(
     user_id: str,
     current_user: UserRecord = Depends(get_current_user),
 ) -> list[AIHistoryItemRead]:
-    require_document_for_ai(document_id, current_user)
+    require_document_for_ai(document_id, current_user, allow_viewer=True)
     if user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot view another user's history")
     items = [
@@ -152,6 +160,9 @@ def cancel_generation(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generation not found")
     if interaction.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    doc = store.get_document(interaction.document_id)
+    if doc is not None and doc.collaborators.get(current_user.id) == "viewer":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Viewers cannot cancel generations")
     interaction.cancel_requested = True
     if interaction.status == "pending":
         interaction.status = "cancelled"

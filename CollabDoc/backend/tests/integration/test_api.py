@@ -122,6 +122,143 @@ def test_ai_stream_history_and_cancel(client):
     assert cancel.status_code == 202, cancel.text
 
 
+def test_viewer_cannot_use_ai_generation_or_cancel(client):
+    owner, owner_headers = register_and_login(client, "aiowner", "aiowner@example.com")
+    viewer, viewer_headers = register_and_login(client, "aiviewer", "aiviewer@example.com")
+
+    created = client.post("/api/v1/documents", json={"title": "AI Access Test"}, headers=owner_headers)
+    document_id = created.json()["id"]
+
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    rewrite_resp = client.post(
+        "/api/v1/ai/rewrite/stream",
+        json={"text": "hello", "context": {"user_id": viewer["id"], "document_id": document_id}},
+        headers=viewer_headers,
+    )
+    assert rewrite_resp.status_code == 403, rewrite_resp.text
+
+    summarize_resp = client.post(
+        "/api/v1/ai/summarize/stream",
+        json={"text": "hello", "context": {"user_id": viewer["id"], "document_id": document_id}},
+        headers=viewer_headers,
+    )
+    assert summarize_resp.status_code == 403, summarize_resp.text
+
+
+def test_viewer_can_read_ai_history(client):
+    owner, owner_headers = register_and_login(client, "histowner", "histowner@example.com")
+    viewer, viewer_headers = register_and_login(client, "histviewer", "histviewer@example.com")
+
+    created = client.post("/api/v1/documents", json={"title": "History Test"}, headers=owner_headers)
+    document_id = created.json()["id"]
+
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    history_resp = client.get(
+        f"/api/v1/ai/history/{document_id}",
+        params={"user_id": viewer["id"]},
+        headers=viewer_headers,
+    )
+    assert history_resp.status_code == 200, history_resp.text
+    assert history_resp.json() == []
+
+
+def test_viewer_cannot_cancel_own_generation_after_role_downgrade(client):
+    """Viewer who previously generated as editor is blocked from cancelling their interaction."""
+    owner, owner_headers = register_and_login(client, "cancelowner", "cancelowner@example.com")
+    user, user_headers = register_and_login(client, "canceluser", "canceluser@example.com")
+
+    created = client.post("/api/v1/documents", json={"title": "Cancel Test"}, headers=owner_headers)
+    document_id = created.json()["id"]
+
+    # Share as editor so the user can generate
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": user["email"], "role": "editor"},
+        headers=owner_headers,
+    )
+
+    with client.stream(
+        "POST",
+        "/api/v1/ai/rewrite/stream",
+        json={"text": "some text.", "context": {"user_id": user["id"], "document_id": document_id}},
+        headers=user_headers,
+    ) as resp:
+        assert resp.status_code == 200
+        interaction_id = resp.headers["x-request-id"]
+        list(resp.iter_text())  # drain stream
+
+    # Downgrade to viewer
+    client.patch(
+        f"/api/v1/documents/{document_id}/collaborators/{user['id']}",
+        json={"role": "viewer"},
+        headers=owner_headers,
+    )
+
+    cancel_resp = client.post(
+        f"/api/v1/ai/generations/{interaction_id}/cancel",
+        headers=user_headers,
+    )
+    assert cancel_resp.status_code == 403, cancel_resp.text
+
+
+def test_editor_and_owner_can_use_ai_endpoints(client):
+    owner, owner_headers = register_and_login(client, "aiowner2", "aiowner2@example.com")
+    editor, editor_headers = register_and_login(client, "aieditor2", "aieditor2@example.com")
+
+    created = client.post("/api/v1/documents", json={"title": "AI Allow Test"}, headers=owner_headers)
+    document_id = created.json()["id"]
+
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": editor["email"], "role": "editor"},
+        headers=owner_headers,
+    )
+
+    for headers, uid in [(owner_headers, owner["id"]), (editor_headers, editor["id"])]:
+        with client.stream(
+            "POST",
+            "/api/v1/ai/rewrite/stream",
+            json={"text": "test sentence.", "context": {"user_id": uid, "document_id": document_id}},
+            headers=headers,
+        ) as resp:
+            assert resp.status_code == 200, resp.text
+            list(resp.iter_text())
+
+        with client.stream(
+            "POST",
+            "/api/v1/ai/summarize/stream",
+            json={"text": "test sentence.", "context": {"user_id": uid, "document_id": document_id}},
+            headers=headers,
+        ) as resp:
+            assert resp.status_code == 200, resp.text
+            list(resp.iter_text())
+
+
+def test_non_collaborator_cannot_use_ai_endpoints(client):
+    owner, owner_headers = register_and_login(client, "aiowner3", "aiowner3@example.com")
+    outsider, outsider_headers = register_and_login(client, "outsider3", "outsider3@example.com")
+
+    created = client.post("/api/v1/documents", json={"title": "Private"}, headers=owner_headers)
+    document_id = created.json()["id"]
+
+    resp = client.post(
+        "/api/v1/ai/rewrite/stream",
+        json={"text": "hello", "context": {"user_id": outsider["id"], "document_id": document_id}},
+        headers=outsider_headers,
+    )
+    assert resp.status_code == 403, resp.text
+
+
 def test_websocket_requires_access_token_and_document_access(client):
     owner, owner_headers = register_and_login(client, "wsowner", "wsowner@example.com")
     other, _ = register_and_login(client, "wsother", "wsother@example.com")
