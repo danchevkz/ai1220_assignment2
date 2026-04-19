@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAISuggestion } from '../hooks/useAISuggestion'
 import { acceptedText, combinedText, isStreaming, isTerminal } from '../ai/aiState'
 import type { AIAction } from '../types'
@@ -31,11 +31,17 @@ export default function AISidePanel({
   const ai = useAISuggestion({ documentId, documentContext })
   const [editingId, setEditingId] = useState<string | null>(null)
 
+  // Keep a ref so the close effect can read streaming state without re-running on every status change.
+  const streamingRef = useRef(false)
+
   // Reset transient panel state whenever the panel closes.
   useEffect(() => {
     if (!open) {
-      ai.cancel()
-      ai.reset()
+      if (streamingRef.current) {
+        ai.cancel()
+      } else {
+        ai.reset()
+      }
       setEditingId(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -47,6 +53,7 @@ export default function AISidePanel({
   const hasSelection = selectionText.trim().length > 0
   const sourceForRequest = hasSelection ? selectionText : documentText
   const streaming = isStreaming(state.status)
+  streamingRef.current = streaming
   const terminal = isTerminal(state.status)
   const anyAccepted = state.chunks.some(c => c.status === 'accepted')
   const allDecided = state.chunks.length > 0 && state.chunks.every(c => c.status === 'accepted' || c.status === 'rejected')
@@ -60,13 +67,14 @@ export default function AISidePanel({
     const text = anyAccepted ? acceptedText(state) : combinedText(state)
     if (!text) return
     onApply(text, hasSelection)
-    ai.reportOutcome(text)
+    const notAllAccepted = state.chunks.some(c => c.status !== 'accepted')
+    ai.reportOutcome(anyAccepted && notAllAccepted ? 'partial' : 'accepted', text)
     ai.reset()
   }
 
   function rejectAll() {
     ai.setAllChunksStatus('rejected')
-    ai.reportOutcome()
+    ai.reportOutcome('rejected')
     ai.reset()
   }
 

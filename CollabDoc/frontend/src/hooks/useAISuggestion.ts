@@ -1,13 +1,11 @@
 import { useCallback, useReducer, useRef } from 'react'
-import {
-  aiReducer,
-  initialAIState,
-  outcomeFromChunks,
-} from '../ai/aiState'
-import { streamSuggestion } from '../api/ai'
+import { aiReducer, initialAIState } from '../ai/aiState'
+import { aiApi, streamSuggestion } from '../api/ai'
 import { extractError } from '../api/errors'
 import { useAuthStore } from '../store/authStore'
-import type { AIAction, AIChunkStatus } from '../types'
+import type { AIAction, AIChunkStatus, AIInteractionOutcome } from '../types'
+
+type ReportableOutcome = Exclude<AIInteractionOutcome, 'pending'>
 
 interface Options {
   documentId: string
@@ -17,6 +15,7 @@ interface Options {
 export function useAISuggestion({ documentId, documentContext }: Options) {
   const [state, dispatch] = useReducer(aiReducer, initialAIState)
   const abortRef = useRef<AbortController | null>(null)
+  const requestIdRef = useRef<string | null>(null)
   const userId = useAuthStore(s => s.user?.id)
 
   const start = useCallback(
@@ -25,6 +24,7 @@ export function useAISuggestion({ documentId, documentContext }: Options) {
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
+      requestIdRef.current = null
 
       dispatch({ type: 'start', action, sourceText })
 
@@ -38,23 +38,29 @@ export function useAISuggestion({ documentId, documentContext }: Options) {
         {
           onEvent: event => dispatch({ type: 'event', event }),
           onError: err => dispatch({ type: 'fail', error: extractError(err, 'AI request failed') }),
+          onRequestId: id => { requestIdRef.current = id },
         },
         controller.signal,
         userId,
       )
     },
-    [documentId, documentContext],
+    [documentId, documentContext, userId],
   )
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
     abortRef.current = null
+    const id = requestIdRef.current
     dispatch({ type: 'cancel' })
+    if (id) {
+      void aiApi.cancelGeneration(id).catch(() => { /* best effort */ })
+    }
   }, [])
 
   const reset = useCallback(() => {
     abortRef.current?.abort()
     abortRef.current = null
+    requestIdRef.current = null
     dispatch({ type: 'reset' })
   }, [])
 
@@ -70,15 +76,17 @@ export function useAISuggestion({ documentId, documentContext }: Options) {
     dispatch({ type: 'edit_chunk', chunkId, text })
   }, [])
 
-  // Best-effort outcome reporting — history logging is non-critical.
-  // Anel's backend doesn't yet expose a PATCH outcome endpoint so this
-  // is a no-op until the endpoint is added. The interactionId is still
-  // tracked so we can add it later without changing the UI contract.
+  // Persist the user's accept/reject/partial decision to the backend so
+  // AI history reflects what actually happened after the stream ended.
   const reportOutcome = useCallback(
-    (_appliedText?: string) => {
-      void outcomeFromChunks(state.chunks) // keep reference alive
+    (outcome: ReportableOutcome, appliedText?: string) => {
+      const id = requestIdRef.current ?? state.interactionId
+      if (!id) return
+      void aiApi
+        .recordOutcome(id, { outcome, applied_text: appliedText ?? null })
+        .catch(() => { /* best effort */ })
     },
-    [state.chunks],
+    [state.interactionId],
   )
 
   return {

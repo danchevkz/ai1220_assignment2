@@ -146,7 +146,20 @@ def test_add_ai_interaction(s):
     assert interaction.input_text == "some text"
     assert interaction.status == "pending"
     assert interaction.result_text == ""
+    assert interaction.outcome is None
     assert s.ai_interactions[interaction.id] is interaction
+
+
+def test_add_ai_interaction_stores_prompt_and_model(s):
+    user = s.create_user("dave2", "dave2@example.com", "h")
+    doc = s.create_document(user.id)
+    interaction = s.add_ai_interaction(
+        doc.id, user.id, "rewrite", "some text",
+        prompt_text="Instruction: Rewrite\n\nInput:\nsome text",
+        model="mock-1",
+    )
+    assert interaction.prompt_text.startswith("Instruction:")
+    assert interaction.model == "mock-1"
 
 
 # ── Reset ──────────────────────────────────────────────────────────────────────

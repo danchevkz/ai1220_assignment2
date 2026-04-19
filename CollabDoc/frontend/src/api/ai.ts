@@ -17,16 +17,21 @@ export interface RecordOutcomeRequest {
 
 // Shape returned by GET /ai/history/:documentId
 export interface AIHistoryItem {
+  id: string
   operation: 'rewrite' | 'summarize'
   timestamp: string
   status: 'pending' | 'completed' | 'failed' | 'cancelled'
-  input_text_length: number
-  output_text_length: number
+  prompt_text: string
+  model: string
+  input_text: string
+  result_text: string
+  outcome: AIInteractionOutcome | null
 }
 
 export interface StreamHandlers {
   onEvent: (event: AIStreamEvent) => void
   onError?: (err: Error) => void
+  onRequestId?: (requestId: string) => void
 }
 
 // Anel's SSE wire format (translated from backend StreamChunk schema).
@@ -54,18 +59,16 @@ export async function streamSuggestion(
   const endpoint =
     request.action === 'rewrite' ? '/ai/rewrite/stream' : '/ai/summarize/stream'
 
+  const context = {
+    user_id: uid,
+    document_id: documentId,
+    document_context: request.document_context ?? null,
+  }
+
   const body =
     request.action === 'rewrite'
-      ? {
-          text: request.source_text,
-          context: { user_id: uid, document_id: documentId },
-        }
-      : {
-          text: request.source_text,
-          context: { user_id: uid, document_id: documentId },
-          max_sentences: 3,
-          format: 'paragraph',
-        }
+      ? { text: request.source_text, context }
+      : { text: request.source_text, context, max_sentences: 3, format: 'paragraph' }
 
   let response: Response
   try {
@@ -99,6 +102,7 @@ export async function streamSuggestion(
 
   // Read request_id from header so we have it before the first chunk fires.
   const requestId = response.headers.get('X-Request-ID') ?? 'r0'
+  handlers.onRequestId?.(requestId)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -184,5 +188,10 @@ export const aiApi = {
   cancelGeneration: (requestId: string) =>
     apiClient
       .post<void>(`/ai/generations/${requestId}/cancel`)
+      .then(r => r.data),
+
+  recordOutcome: (requestId: string, body: RecordOutcomeRequest) =>
+    apiClient
+      .patch<AIHistoryItem>(`/ai/generations/${requestId}/outcome`, body)
       .then(r => r.data),
 }

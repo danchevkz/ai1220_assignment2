@@ -177,4 +177,92 @@ describe('streamSuggestion (SSE consumer — Anel wire format)', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-xyz')
     setAccessToken(null)
   })
+
+  it('sends document_context in the rewrite request body', async () => {
+    const fetchSpy = vi.fn().mockResolvedValueOnce(makeStreamResponse([], 'r6'))
+    global.fetch = fetchSpy
+
+    await streamSuggestion(
+      'doc-1',
+      { action: 'rewrite', source_text: 'hello', document_context: 'surrounding text' },
+      { onEvent: () => {} },
+      undefined,
+      'user-42',
+    )
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string)
+    expect(body.context).toEqual({
+      user_id: 'user-42',
+      document_id: 'doc-1',
+      document_context: 'surrounding text',
+    })
+  })
+
+  it('sends document_context in the summarize request body', async () => {
+    const fetchSpy = vi.fn().mockResolvedValueOnce(makeStreamResponse([], 'r7'))
+    global.fetch = fetchSpy
+
+    await streamSuggestion(
+      'doc-1',
+      { action: 'summarize', source_text: 'hello', document_context: 'ctx' },
+      { onEvent: () => {} },
+      undefined,
+      'user-42',
+    )
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.context.document_context).toBe('ctx')
+    expect(body.max_sentences).toBe(3)
+  })
+
+  it('sends document_context as null when not provided', async () => {
+    const fetchSpy = vi.fn().mockResolvedValueOnce(makeStreamResponse([], 'r8'))
+    global.fetch = fetchSpy
+
+    await streamSuggestion(
+      'doc-1',
+      { action: 'rewrite', source_text: 'hello' },
+      { onEvent: () => {} },
+    )
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.context.document_context).toBeNull()
+  })
+
+  it('invokes onRequestId with the X-Request-ID header before streaming', async () => {
+    const frames = [
+      sseFrame({ request_id: 'req-id-9', operation: 'rewrite', delta: 'x', done: false }),
+      sseFrame({ request_id: 'req-id-9', operation: 'rewrite', delta: '', done: true }),
+    ]
+    global.fetch = vi.fn().mockResolvedValueOnce(makeStreamResponse(frames, 'req-id-9'))
+
+    const onRequestId = vi.fn()
+    const events: AIStreamEvent[] = []
+    await streamSuggestion(
+      'doc-1',
+      { action: 'rewrite', source_text: 'x' },
+      { onEvent: e => events.push(e), onRequestId },
+    )
+
+    expect(onRequestId).toHaveBeenCalledWith('req-id-9')
+    expect(onRequestId).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call onRequestId when response is not ok', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Forbidden' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    const onRequestId = vi.fn()
+    await streamSuggestion(
+      'doc-1',
+      { action: 'rewrite', source_text: 'x' },
+      { onEvent: () => {}, onRequestId },
+    )
+    expect(onRequestId).not.toHaveBeenCalled()
+  })
 })

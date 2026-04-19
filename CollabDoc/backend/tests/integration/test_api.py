@@ -104,7 +104,14 @@ def test_ai_stream_history_and_cancel(client):
     with client.stream(
         "POST",
         "/api/v1/ai/rewrite/stream",
-        json={"text": "this sentence needs cleanup.", "context": {"user_id": owner["id"], "document_id": document_id}},
+        json={
+            "text": "this sentence needs cleanup.",
+            "context": {
+                "user_id": owner["id"],
+                "document_id": document_id,
+                "document_context": "Surrounding document text.",
+            },
+        },
         headers=headers,
     ) as response:
         assert response.status_code == 200, response.text
@@ -115,11 +122,144 @@ def test_ai_stream_history_and_cancel(client):
 
     history = client.get(f"/api/v1/ai/history/{document_id}", params={"user_id": owner["id"]}, headers=headers)
     assert history.status_code == 200, history.text
-    assert history.json()[0]["operation"] == "rewrite"
-    assert history.json()[0]["status"] == "completed"
+    entry = history.json()[0]
+    assert entry["id"] == request_id
+    assert entry["operation"] == "rewrite"
+    assert entry["status"] == "completed"
+    assert entry["input_text"] == "this sentence needs cleanup."
+    assert entry["result_text"]
+    assert entry["model"]
+    assert "Instruction:" in entry["prompt_text"]
+    assert "Surrounding document text." in entry["prompt_text"]
+    assert entry["outcome"] is None
 
     cancel = client.post(f"/api/v1/ai/generations/{request_id}/cancel", headers=headers)
     assert cancel.status_code == 202, cancel.text
+
+
+def test_ai_prompt_bounds_long_input_and_context(client):
+    from app.services.ai.provider import MAX_CONTEXT_CHARS, MAX_INPUT_CHARS
+
+    owner, headers = register_and_login(client, "boundsuser", "bounds@example.com")
+    document_id = client.post("/api/v1/documents", json={"title": "Bounds"}, headers=headers).json()["id"]
+
+    long_text = "x" * (MAX_INPUT_CHARS + 200)
+    long_ctx = "y" * (MAX_CONTEXT_CHARS + 200)
+    with client.stream(
+        "POST",
+        "/api/v1/ai/rewrite/stream",
+        json={
+            "text": long_text,
+            "context": {
+                "user_id": owner["id"],
+                "document_id": document_id,
+                "document_context": long_ctx,
+            },
+        },
+        headers=headers,
+    ) as response:
+        assert response.status_code == 200
+        list(response.iter_text())
+
+    history = client.get(f"/api/v1/ai/history/{document_id}", params={"user_id": owner["id"]}, headers=headers)
+    entry = history.json()[0]
+    assert len(entry["input_text"]) == MAX_INPUT_CHARS
+    # Context fits into prompt_text (bounded), so full prompt length is bounded too.
+    assert "y" * MAX_CONTEXT_CHARS in entry["prompt_text"]
+    assert "y" * (MAX_CONTEXT_CHARS + 1) not in entry["prompt_text"]
+
+
+def test_ai_record_outcome_persists(client):
+    owner, headers = register_and_login(client, "outcomeuser", "outcome@example.com")
+    document_id = client.post("/api/v1/documents", json={"title": "Outcome"}, headers=headers).json()["id"]
+
+    with client.stream(
+        "POST",
+        "/api/v1/ai/rewrite/stream",
+        json={
+            "text": "some text.",
+            "context": {"user_id": owner["id"], "document_id": document_id},
+        },
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200
+        interaction_id = resp.headers["x-request-id"]
+        list(resp.iter_text())
+
+    patched = client.patch(
+        f"/api/v1/ai/generations/{interaction_id}/outcome",
+        json={"outcome": "accepted", "applied_text": "some text."},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["outcome"] == "accepted"
+
+    history = client.get(f"/api/v1/ai/history/{document_id}", params={"user_id": owner["id"]}, headers=headers)
+    assert history.json()[0]["outcome"] == "accepted"
+
+
+def test_ai_record_outcome_rejects_other_users(client):
+    owner, owner_headers = register_and_login(client, "outowner", "outowner@example.com")
+    other, other_headers = register_and_login(client, "outother", "outother@example.com")
+    document_id = client.post("/api/v1/documents", json={"title": "OutcomeAuth"}, headers=owner_headers).json()["id"]
+
+    with client.stream(
+        "POST",
+        "/api/v1/ai/rewrite/stream",
+        json={"text": "x", "context": {"user_id": owner["id"], "document_id": document_id}},
+        headers=owner_headers,
+    ) as resp:
+        interaction_id = resp.headers["x-request-id"]
+        list(resp.iter_text())
+
+    resp = client.patch(
+        f"/api/v1/ai/generations/{interaction_id}/outcome",
+        json={"outcome": "accepted"},
+        headers=other_headers,
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_ai_record_outcome_rejects_invalid_outcome(client):
+    owner, headers = register_and_login(client, "badout", "badout@example.com")
+    document_id = client.post("/api/v1/documents", json={"title": "BadOut"}, headers=headers).json()["id"]
+
+    with client.stream(
+        "POST",
+        "/api/v1/ai/rewrite/stream",
+        json={"text": "x", "context": {"user_id": owner["id"], "document_id": document_id}},
+        headers=headers,
+    ) as resp:
+        interaction_id = resp.headers["x-request-id"]
+        list(resp.iter_text())
+
+    resp = client.patch(
+        f"/api/v1/ai/generations/{interaction_id}/outcome",
+        json={"outcome": "pending"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_ai_cancel_completed_generation_preserves_outcome(client):
+    """Cancelling a completed (non-pending) generation must NOT overwrite its outcome to 'cancelled'."""
+    owner, headers = register_and_login(client, "cancelout", "cancelout@example.com")
+    document_id = client.post("/api/v1/documents", json={"title": "CancelOut"}, headers=headers).json()["id"]
+
+    with client.stream(
+        "POST",
+        "/api/v1/ai/rewrite/stream",
+        json={"text": "x.", "context": {"user_id": owner["id"], "document_id": document_id}},
+        headers=headers,
+    ) as resp:
+        interaction_id = resp.headers["x-request-id"]
+        list(resp.iter_text())
+
+    cancel = client.post(f"/api/v1/ai/generations/{interaction_id}/cancel", headers=headers)
+    assert cancel.status_code == 202
+
+    history = client.get(f"/api/v1/ai/history/{document_id}", params={"user_id": owner["id"]}, headers=headers)
+    assert history.json()[0]["outcome"] is None
 
 
 def test_viewer_cannot_use_ai_generation_or_cancel(client):

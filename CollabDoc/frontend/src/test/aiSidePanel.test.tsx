@@ -13,6 +13,7 @@ vi.mock('../api/ai', async () => {
     aiApi: {
       listHistory: vi.fn().mockResolvedValue([]),
       cancelGeneration: vi.fn().mockResolvedValue(undefined),
+      recordOutcome: vi.fn().mockResolvedValue(undefined),
     },
   }
 })
@@ -185,6 +186,154 @@ describe('AISidePanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/model unavailable/i)
     })
+  })
+
+  it('cancel during streaming calls backend cancelGeneration with captured request id', async () => {
+    let resolveStream!: () => void
+    vi.mocked(aiApi.streamSuggestion).mockImplementationOnce(
+      async (_docId, _req, handlers, signal) => {
+        handlers.onRequestId?.('req-cancel-1')
+        handlers.onEvent({ type: 'chunk', id: 'c1', text: 'partial' })
+        await new Promise<void>(resolve => {
+          resolveStream = resolve
+          signal?.addEventListener('abort', () => resolve())
+        })
+      },
+    )
+
+    renderPanel({ selectionText: 'go' })
+    await userEvent.click(screen.getByRole('button', { name: /^rewrite$/i }))
+    await waitFor(() => expect(screen.getByText('partial')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }))
+
+    expect(aiApi.aiApi.cancelGeneration).toHaveBeenCalledWith('req-cancel-1')
+    await act(async () => { resolveStream() })
+  })
+
+  it('apply all reports "accepted" outcome to the backend', async () => {
+    vi.mocked(aiApi.streamSuggestion).mockImplementationOnce(
+      async (_docId, _req, handlers) => {
+        handlers.onRequestId?.('req-apply-1')
+        handlers.onEvent({ type: 'chunk', id: 'c1', text: 'A' })
+        handlers.onEvent({ type: 'chunk', id: 'c2', text: 'B' })
+        handlers.onEvent({ type: 'done', interaction_id: 'req-apply-1' })
+      },
+    )
+    renderPanel({ selectionText: 'pick me' })
+    await userEvent.click(screen.getByRole('button', { name: /^rewrite$/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /apply all/i })).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /apply all/i }))
+
+    expect(aiApi.aiApi.recordOutcome).toHaveBeenCalledTimes(1)
+    expect(aiApi.aiApi.recordOutcome).toHaveBeenCalledWith(
+      'req-apply-1',
+      expect.objectContaining({ outcome: 'accepted' }),
+    )
+  })
+
+  it('reject all reports "rejected" outcome to the backend', async () => {
+    vi.mocked(aiApi.streamSuggestion).mockImplementationOnce(
+      async (_docId, _req, handlers) => {
+        handlers.onRequestId?.('req-reject-1')
+        handlers.onEvent({ type: 'chunk', id: 'c1', text: 'nope' })
+        handlers.onEvent({ type: 'done', interaction_id: 'req-reject-1' })
+      },
+    )
+    renderPanel({ selectionText: 'src' })
+    await userEvent.click(screen.getByRole('button', { name: /^rewrite$/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /reject all/i })).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /reject all/i }))
+
+    expect(aiApi.aiApi.recordOutcome).toHaveBeenCalledWith(
+      'req-reject-1',
+      expect.objectContaining({ outcome: 'rejected' }),
+    )
+  })
+
+  it('partial accept reports "partial" outcome to the backend', async () => {
+    vi.mocked(aiApi.streamSuggestion).mockImplementationOnce(
+      async (_docId, _req, handlers) => {
+        handlers.onRequestId?.('req-partial-1')
+        handlers.onEvent({ type: 'chunk', id: 'c1', text: 'Keep' })
+        handlers.onEvent({ type: 'chunk', id: 'c2', text: 'Drop' })
+        handlers.onEvent({ type: 'done', interaction_id: 'req-partial-1' })
+      },
+    )
+    renderPanel({ selectionText: 'src' })
+    await userEvent.click(screen.getByRole('button', { name: /^rewrite$/i }))
+    await waitFor(() => expect(screen.getByText('Keep')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /accept chunk c1/i }))
+    await userEvent.click(screen.getByRole('button', { name: /reject chunk c2/i }))
+    await userEvent.click(screen.getByRole('button', { name: /apply selected/i }))
+
+    expect(aiApi.aiApi.recordOutcome).toHaveBeenCalledWith(
+      'req-partial-1',
+      expect.objectContaining({ outcome: 'partial' }),
+    )
+  })
+
+  it('closing panel after completed generation does not call cancelGeneration', async () => {
+    vi.mocked(aiApi.streamSuggestion).mockImplementationOnce(
+      async (_docId, _req, handlers) => {
+        handlers.onRequestId?.('req-close-1')
+        handlers.onEvent({ type: 'chunk', id: 'c1', text: 'result' })
+        handlers.onEvent({ type: 'done', interaction_id: 'req-close-1' })
+      },
+    )
+    const { rerender } = render(
+      <AISidePanel
+        documentId="doc-1"
+        selectionText="pick me"
+        documentText=""
+        open={true}
+        onClose={vi.fn()}
+        onApply={vi.fn()}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /^rewrite$/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /apply all/i })).toBeInTheDocument())
+
+    rerender(
+      <AISidePanel
+        documentId="doc-1"
+        selectionText="pick me"
+        documentText=""
+        open={false}
+        onClose={vi.fn()}
+        onApply={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(aiApi.aiApi.cancelGeneration).not.toHaveBeenCalled()
+    })
+  })
+
+  it('accepted + undecided chunks reports "partial" outcome on apply selected', async () => {
+    vi.mocked(aiApi.streamSuggestion).mockImplementationOnce(
+      async (_docId, _req, handlers) => {
+        handlers.onRequestId?.('req-undecided-1')
+        handlers.onEvent({ type: 'chunk', id: 'c1', text: 'Keep' })
+        handlers.onEvent({ type: 'chunk', id: 'c2', text: 'Undecided' })
+        handlers.onEvent({ type: 'done', interaction_id: 'req-undecided-1' })
+      },
+    )
+    renderPanel({ selectionText: 'src' })
+    await userEvent.click(screen.getByRole('button', { name: /^rewrite$/i }))
+    await waitFor(() => expect(screen.getByText('Keep')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /accept chunk c1/i }))
+    await userEvent.click(screen.getByRole('button', { name: /apply selected/i }))
+
+    expect(aiApi.aiApi.recordOutcome).toHaveBeenCalledWith(
+      'req-undecided-1',
+      expect.objectContaining({ outcome: 'partial' }),
+    )
   })
 
   it('Edit toggles a textarea and persists edited text on apply', async () => {

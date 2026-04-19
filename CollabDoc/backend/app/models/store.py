@@ -9,6 +9,7 @@ from uuid import uuid4
 
 DocumentRole = Literal["owner", "editor", "viewer"]
 AIStatus = Literal["pending", "completed", "failed", "cancelled"]
+AIOutcome = Literal["accepted", "rejected", "partial", "cancelled"]
 
 
 def utcnow() -> datetime:
@@ -73,6 +74,10 @@ class AIInteractionRecord:
     status: AIStatus = "pending"
     created_at: datetime = field(default_factory=utcnow)
     cancel_requested: bool = False
+    prompt_text: str = ""
+    model: str = ""
+    outcome: AIOutcome | None = None
+    applied_text: str | None = None
 
 
 class InMemoryStore:
@@ -200,6 +205,8 @@ class InMemoryStore:
         user_id: str,
         operation: Literal["rewrite", "summarize"],
         input_text: str,
+        prompt_text: str = "",
+        model: str = "",
     ) -> AIInteractionRecord:
         interaction = AIInteractionRecord(
             id=str(uuid4()),
@@ -207,6 +214,8 @@ class InMemoryStore:
             user_id=user_id,
             operation=operation,
             input_text=input_text,
+            prompt_text=prompt_text,
+            model=model,
         )
         self.ai_interactions[interaction.id] = interaction
         return interaction

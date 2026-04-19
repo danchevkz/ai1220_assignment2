@@ -9,10 +9,19 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_current_user
 from app.models.store import AIInteractionRecord, DocumentRecord, UserRecord, store
-from app.schemas.ai import AIHistoryItemRead, RewriteStreamRequest, SummarizeStreamRequest
-from app.services.ai.provider import provider
+from app.schemas.ai import (
+    AIHistoryItemRead,
+    RecordOutcomeRequest,
+    RewriteStreamRequest,
+    SummarizeStreamRequest,
+)
+from app.services.ai.provider import build_prompt, provider
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+REWRITE_INSTRUCTION = "Rewrite the input to improve clarity and tone while preserving meaning."
+SUMMARIZE_INSTRUCTION = "Summarize the input concisely."
 
 
 def require_document_for_ai(
@@ -89,12 +98,26 @@ def rewrite_stream(
     response: Response,
     current_user: UserRecord = Depends(get_current_user),
 ) -> StreamingResponse:
-    document_id = payload.context.document_id if payload.context else None
+    ctx = payload.context
+    document_id = ctx.document_id if ctx else None
     if not document_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_id is required")
     require_document_for_ai(document_id, current_user)
-    interaction = store.add_ai_interaction(document_id, current_user.id, "rewrite", payload.text)
-    generated = provider.rewrite(payload.text)
+
+    prompt = build_prompt(
+        instruction=REWRITE_INSTRUCTION,
+        text=payload.text,
+        context=ctx.document_context if ctx else None,
+    )
+    interaction = store.add_ai_interaction(
+        document_id,
+        current_user.id,
+        "rewrite",
+        prompt.text,
+        prompt_text=prompt.render(),
+        model=provider.model,
+    )
+    generated = provider.rewrite(prompt)
     response.headers["X-Request-ID"] = interaction.id
     return StreamingResponse(
         stream_text(interaction, generated),
@@ -109,12 +132,26 @@ def summarize_stream(
     response: Response,
     current_user: UserRecord = Depends(get_current_user),
 ) -> StreamingResponse:
-    document_id = payload.context.document_id if payload.context else None
+    ctx = payload.context
+    document_id = ctx.document_id if ctx else None
     if not document_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_id is required")
     require_document_for_ai(document_id, current_user)
-    interaction = store.add_ai_interaction(document_id, current_user.id, "summarize", payload.text)
-    generated = provider.summarize(payload.text, payload.max_sentences)
+
+    prompt = build_prompt(
+        instruction=SUMMARIZE_INSTRUCTION,
+        text=payload.text,
+        context=ctx.document_context if ctx else None,
+    )
+    interaction = store.add_ai_interaction(
+        document_id,
+        current_user.id,
+        "summarize",
+        prompt.text,
+        prompt_text=prompt.render(),
+        model=provider.model,
+    )
+    generated = provider.summarize(prompt, payload.max_sentences)
     response.headers["X-Request-ID"] = interaction.id
     return StreamingResponse(
         stream_text(interaction, generated),
@@ -140,11 +177,15 @@ def ai_history(
     items.sort(key=lambda item: item.created_at, reverse=True)
     return [
         AIHistoryItemRead(
+            id=item.id,
             operation=item.operation,
             timestamp=item.created_at.isoformat(),
             status=item.status,
-            input_text_length=len(item.input_text),
-            output_text_length=len(item.result_text),
+            prompt_text=item.prompt_text,
+            model=item.model,
+            input_text=item.input_text,
+            result_text=item.result_text,
+            outcome=item.outcome,
         )
         for item in items
     ]
@@ -166,4 +207,36 @@ def cancel_generation(
     interaction.cancel_requested = True
     if interaction.status == "pending":
         interaction.status = "cancelled"
+    if interaction.outcome is None and interaction.status != "completed":
+        interaction.outcome = "cancelled"
     return {"status": "cancelled"}
+
+
+@router.patch("/generations/{interaction_id}/outcome", response_model=AIHistoryItemRead)
+def record_outcome(
+    interaction_id: str,
+    payload: RecordOutcomeRequest,
+    current_user: UserRecord = Depends(get_current_user),
+) -> AIHistoryItemRead:
+    interaction = store.ai_interactions.get(interaction_id)
+    if interaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generation not found")
+    if interaction.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    doc = store.get_document(interaction.document_id)
+    if doc is not None and doc.collaborators.get(current_user.id) == "viewer":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Viewers cannot record outcomes")
+    interaction.outcome = payload.outcome
+    if payload.applied_text is not None:
+        interaction.applied_text = payload.applied_text
+    return AIHistoryItemRead(
+        id=interaction.id,
+        operation=interaction.operation,
+        timestamp=interaction.created_at.isoformat(),
+        status=interaction.status,
+        prompt_text=interaction.prompt_text,
+        model=interaction.model,
+        input_text=interaction.input_text,
+        result_text=interaction.result_text,
+        outcome=interaction.outcome,
+    )
