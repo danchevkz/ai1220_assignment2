@@ -2,7 +2,7 @@
 
 Shared working document for the team. Update checkboxes as work lands. Add notes under a task rather than deleting it — the history is useful for the deviation report.
 
-Last updated: 2026-04-18 (Phase 7: Playwright E2E suite in (bonus #5). 8 specs green against the live backend: auth ×4, golden-path ×3, two-tab collaboration ×1. Anel's AI backend PR #1 merged as a parallel module — Yintong's router stays mounted.)
+Last updated: 2026-04-19 (Phase 7 docs closed out by Alexander: top-level README rewritten with per-layer stack, auth lifecycle diagram, y-websocket wire protocol, collab + AI concurrent-edit strategy; module READMEs added under `backend/app/**` and `frontend/src/**`; DEVIATIONS.md expanded to 12 rows covering storage, CRDT, WS format, presence, sharing, AI provider/delivery, WS auth, state, tests, docs; root `.env.example` corrected to `JWT_SECRET_KEY` + MockLLM note.)
 
 ---
 
@@ -42,11 +42,11 @@ Cross-cutting (tests, docs, demo) is shared.
 
 ## Coordination items (raise with other teams)
 
-- [ ] Confirm backend implements the **`y-websocket` wire protocol** — a Python option is [`ypy-websocket`](https://github.com/y-crdt/ypy-websocket). Client uses `y-websocket@^3` against `ws://<host>/ws/<docId>?token=<jwt>`.
-- [ ] Agree on **awareness channel** — same WS, separate message type.
+- [x] Confirm backend implements the **`y-websocket` wire protocol** — Yintong's backend uses [`ypy-websocket`](https://github.com/y-crdt/ypy-websocket) mounted at `/ws` via `PersistentWebsocketServer` in [`backend/app/websocket/collaboration.py`](backend/app/websocket/collaboration.py). Client uses `y-websocket@^3` against `ws://<host>/ws/<docId>?token=<jwt>`. Auth decoded in `on_connect`.
+- [x] Agree on **awareness channel** — same WS, standard y-websocket awareness message type (binary `1`). Documented in README.
 - [x] Agree on **share-by-link** endpoint shape: client now expects `GET /documents/:id/share-links` (list), `POST /documents/:id/share-links` body `{ role, expires_in_hours: number | null }` → `ShareLink { token, role, created_at, expires_at: string | null, created_by }`, and `DELETE /documents/:id/share-links/:token`. Public landing route at `/share/:token` is wired (`pages/ShareRedeem.tsx`) — unauthed users bounce to `/login` with `from` state and come back automatically. **Action for Yintong**: confirm / implement `POST /share-links/:token/redeem` → `Document` (adds caller as collaborator with the token's role, 404 if expired/revoked). Frontend currently calls this shape.
-- [ ] Confirm backend exposes **`PATCH /documents/:id/collaborators/:userId`** (body `{ role }`) and **`DELETE /documents/:id/collaborators/:userId`** — both return the updated `Document`. Used by ShareModal access list.
-- [x] **AI SSE format agreed** (Anel PR #1): backend streams `{ request_id, operation, delta, done }`. Frontend adapter in `api/ai.ts` translates to internal events; paragraph-splits on `done: true` for per-paragraph partial accept (bonus #4). Endpoints: `POST /ai/rewrite/stream`, `POST /ai/summarize/stream`, `GET /ai/history/:docId?user_id=`, `POST /ai/generations/:id/cancel`. **Action for Yintong**: mount `app.ai.router` in `main.py` at `/api/v1`.
+- [x] Confirm backend exposes **`PATCH /documents/:id/collaborators/:userId`** (body `{ role }`) and **`DELETE /documents/:id/collaborators/:userId`** — both return the updated `Document`. Implemented by Yintong in [`backend/app/api/routes/documents.py`](backend/app/api/routes/documents.py) (handlers `update_collaborator` / `delete_collaborator`, owner-only, rejects owner role changes). Used by ShareModal access list.
+- [x] **AI SSE format agreed** (Anel PR #1): backend streams `{ request_id, operation, delta, done }`. Frontend adapter in `api/ai.ts` translates to internal events; paragraph-splits on `done: true` for per-paragraph partial accept (bonus #4). Endpoints: `POST /ai/rewrite/stream`, `POST /ai/summarize/stream`, `GET /ai/history/:docId?user_id=`, `POST /ai/generations/:id/cancel`. **Resolution**: Yintong's `app/api/routes/ai.py` is the mounted implementation; matches the agreed shape. Anel's `app/ai/router.py` remains in-tree as a parallel module but is not mounted — no frontend changes needed.
 - [ ] Branch/PR strategy: feature branches + PRs with reviews. Rubric flags "single final commit" as a red flag.
 
 ---
@@ -107,17 +107,17 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 - [x] **Accept / Reject / Edit** suggestion: per-chunk buttons + "Apply all"/"Reject all"; accepted text inserted via `editor.chain().insertContent()`; Tiptap history handles Undo natively. Owner: Alexander. Partner: Anel.
 - [x] **Partial acceptance** (bonus #4): backend streams word-level deltas → frontend splits completed text into paragraph chunks on `done`; per-chunk Accept/Reject in UI. `ai/aiState.ts` `replace_chunks` event. Owner: Alexander. Partner: Anel.
 - [x] **History UI**: `components/AIHistoryList.tsx`; `GET /ai/history/:docId?user_id=`; shows operation, status, char counts. Owner: Alexander. Partner: Anel.
-- [ ] **Strategy note** in README: how AI suggestions behave during concurrent edits (spec 3.3). Owner: Anel. Partner: Alexander.
+- [x] **Strategy note** in README: how AI suggestions behave during concurrent edits (spec 3.3) — written into the top-level README "AI concurrent-edit strategy" section (suggestion streams into side panel, insertion only on Accept; range-lost fallback; per-user history so cancel is isolated). Owner: Anel → completed by Alexander. Partner: Alexander.
 - [x] Tests: 16 aiState reducer tests, 6 aiStream SSE consumer tests (including abort), 10 aiSidePanel UI tests (partial accept, edit, cancel, error). (32 new tests, 106/106 total passing) Owner: Alexander. Partner: Anel.
 
 ### Phase 7 — Quality & docs
 
 - [ ] **Component tests** (Vitest + RTL): auth form, editor toolbar, AI suggestion panel, presence list. Owner: Alexander. Partner: Anel.
 - [x] **E2E tests** (Playwright, bonus #5): `frontend/e2e/` — 8 specs, single worker (backend state is shared). Auth ×4 (register, protected redirect, login-after-register, invalid login), golden-path ×3 (rich-text + title auto-save, AI rewrite streaming + partial-accept, version history drawer + restore), collaboration ×1 (two browser contexts, share-by-link redeem, bidirectional WS propagation). Playwright `webServer` boots Vite on :5199 (backend assumed on :8000, `make dev-backend`). Run via `make test-e2e` or `npm run test:e2e`. Owner: Alexander.
-- [ ] **README**: auth lifecycle diagram (REST + WS), WS message protocol, collab strategy, AI concurrent-edit strategy. Owner: Yintong. Partners: Alexander, Anel.
-- [ ] **Module READMEs**: short purpose note in each `src/` folder. Owner: Yintong.
-- [ ] **DEVIATIONS.md**: update as we diverge from A1. Remove the "LWW instead of CRDT" row once Yjs is in. Owner: Yintong.
-- [ ] **.env.example**: documented. Owner: Yintong. Partner: Anel.
+- [x] **README**: auth lifecycle diagram (REST + WS), y-websocket binary wire protocol table, collab strategy (CRDT + offline + awareness + snapshot-for-versions), AI concurrent-edit strategy, corrected API table + project structure, testing matrix, bonus-item summary. Owner: Yintong → completed by Alexander. Partners: Alexander, Anel.
+- [x] **Module READMEs**: short purpose note added in `backend/app/api/routes`, `backend/app/core`, `backend/app/models`, `backend/app/schemas`, `backend/app/services/ai`, `backend/app/websocket`, and `frontend/src/{ai,api,collab,components,hooks,pages,store,types}`. Owner: Yintong → completed by Alexander.
+- [x] **DEVIATIONS.md**: expanded to 12 rows — storage, CRDT (replaces LWW row), WS wire format, presence, share-by-link, AI provider (MockLLM), AI delivery (SSE + partial accept), AI insertion flow (side panel), WS auth (query-param JWT), state (Zustand vs Redux), testing (3-layer suite), docs surface. Owner: Yintong → completed by Alexander.
+- [x] **.env.example**: root template corrected — `JWT_SECRET_KEY` instead of the stale `SECRET_KEY`/`ANTHROPIC_API_KEY`, documented that `MockLLMProvider` needs no key, left a commented `GEMINI_API_KEY` slot for future swap. Owner: Yintong → completed by Alexander. Partner: Anel.
   - [x] Frontend `.env.example` added at `frontend/.env.example` (`VITE_API_URL`, `VITE_WS_URL`; optional — dev proxy covers the default case). Owner: Alexander.
 
 ### Phase 8 — Demo prep
