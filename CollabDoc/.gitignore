@@ -39,3 +39,5 @@ DS_Store
 
 # Claude context
 CLAUDE_SYSTEM_PROMPT.md
+
+backend/.data/
