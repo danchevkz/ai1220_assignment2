@@ -1,4 +1,4 @@
-import { useEditor, EditorContent, type Extensions } from '@tiptap/react'
+import { useEditor, EditorContent, type Editor as TiptapEditor, type Extensions } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -13,6 +13,18 @@ interface AwarenessProviderLike {
   awareness: unknown
 }
 
+export interface EditorSelectionState {
+  text: string
+  hasSelection: boolean
+  from: number
+  to: number
+}
+
+export type ReplaceSelectionText = (
+  text: string,
+  selection?: Pick<EditorSelectionState, 'from' | 'to'>,
+) => boolean
+
 interface Props {
   // When `ydoc` is provided, the editor binds to Yjs — `content` is ignored
   // for initial load (Y.Doc is the source of truth). When absent, the editor
@@ -24,6 +36,8 @@ interface Props {
   content?: string
   onChange?: (html: string) => void
   onActivity?: () => void
+  onSelectionChange?: (selection: EditorSelectionState) => void
+  onReplaceSelectionReady?: (replace: ReplaceSelectionText | null) => void
   editable?: boolean
   placeholder?: string
 }
@@ -35,6 +49,8 @@ export default function Editor({
   content = '',
   onChange,
   onActivity,
+  onSelectionChange,
+  onReplaceSelectionReady,
   editable = true,
   placeholder = 'Start writing…',
 }: Props) {
@@ -72,9 +88,16 @@ export default function Editor({
       extensions,
       content: isCollab ? undefined : content,
       editable,
+      onCreate({ editor }) {
+        onSelectionChange?.(getSelectionState(editor))
+      },
       onUpdate({ editor }) {
         onChange?.(editor.getHTML())
         onActivity?.()
+        onSelectionChange?.(getSelectionState(editor))
+      },
+      onSelectionUpdate({ editor }) {
+        onSelectionChange?.(getSelectionState(editor))
       },
     },
     // Rebuild the editor if the underlying Y.Doc changes (doc switch).
@@ -96,10 +119,40 @@ export default function Editor({
     editor.setEditable(editable)
   }, [editable, editor])
 
+  useEffect(() => {
+    if (!onReplaceSelectionReady) return
+
+    if (!editor) {
+      onReplaceSelectionReady(null)
+      return
+    }
+
+    onReplaceSelectionReady((text, selection) => {
+      const range = selection ?? getSelectionState(editor)
+      return editor
+        .chain()
+        .focus()
+        .insertContentAt({ from: range.from, to: range.to }, text)
+        .run()
+    })
+
+    return () => onReplaceSelectionReady(null)
+  }, [editor, onReplaceSelectionReady])
+
   return (
     <div className="editor">
       <Toolbar editor={editor} disabled={!editable} />
       <EditorContent editor={editor} className="editor-content" />
     </div>
   )
+}
+
+function getSelectionState(editor: TiptapEditor): EditorSelectionState {
+  const { from, to } = editor.state.selection
+  return {
+    text: editor.state.doc.textBetween(from, to, '\n\n'),
+    hasSelection: from !== to,
+    from,
+    to,
+  }
 }

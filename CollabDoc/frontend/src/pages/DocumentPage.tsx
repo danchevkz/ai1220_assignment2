@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import AISidePanel from '../components/AI/AISidePanel'
 import Editor from '../components/Editor/Editor'
+import type {
+  EditorSelectionState,
+  ReplaceSelectionText,
+} from '../components/Editor/Editor'
 import VersionHistory from '../components/VersionHistory'
 import ShareModal from '../components/ShareModal'
 import ConnectionStatus from '../components/ConnectionStatus'
@@ -15,6 +20,12 @@ import { useAuthStore } from '../store/authStore'
 import { identityFor } from '../collab/identity'
 import type { Document, DocumentRole } from '../types'
 
+interface LastAIApply {
+  from: number
+  previousText: string
+  appliedText: string
+}
+
 export default function DocumentPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -26,9 +37,17 @@ export default function DocumentPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [selection, setSelection] = useState<EditorSelectionState>({
+    text: '',
+    hasSelection: false,
+    from: 0,
+    to: 0,
+  })
+  const [lastAIApply, setLastAIApply] = useState<LastAIApply | null>(null)
 
   // Bumped after restore to force a full Y.Doc rebuild from the server.
   const [reloadKey, setReloadKey] = useState(0)
+  const replaceSelectionRef = useRef<ReplaceSelectionText | null>(null)
 
   // Content is owned by Yjs — the editor binds to provider.doc directly.
   // Title is still REST-managed (it's metadata, not in the Y.Doc).
@@ -87,10 +106,49 @@ export default function DocumentPage() {
   useEffect(() => { loadedOnceRef.current = false }, [id, reloadKey])
 
   useEffect(() => {
+    setSelection({
+      text: '',
+      hasSelection: false,
+      from: 0,
+      to: 0,
+    })
+    replaceSelectionRef.current = null
+    setLastAIApply(null)
+  }, [id, reloadKey])
+
+  useEffect(() => {
     const handler = () => { titleSave.flush() }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [titleSave])
+
+  const handleAcceptAIText = useCallback((nextText: string) => {
+    if (!selection.hasSelection) return false
+    const applied = replaceSelectionRef.current?.(nextText, selection) ?? false
+    if (applied) {
+      setLastAIApply({
+        from: selection.from,
+        previousText: selection.text,
+        appliedText: nextText,
+      })
+    }
+    return applied
+  }, [selection])
+
+  const handleUndoAIText = useCallback(() => {
+    if (!lastAIApply) return false
+
+    const undone = replaceSelectionRef.current?.(lastAIApply.previousText, {
+      from: lastAIApply.from,
+      to: lastAIApply.from + lastAIApply.appliedText.length,
+    }) ?? false
+
+    if (undone) {
+      setLastAIApply(null)
+    }
+
+    return undone
+  }, [lastAIApply])
 
   if (isLoading) {
     return <div className="page-loading">Loading document…</div>
@@ -145,16 +203,33 @@ export default function DocumentPage() {
       </div>
 
       <div className="doc-page-editor">
-        <Editor
-          key={reloadKey}
-          ydoc={provider?.doc}
-          awarenessProvider={provider?.wsProvider}
-          user={me ? { name: me.name, color: me.color } : undefined}
-          onActivity={markActive}
-          editable={canEdit}
-          placeholder={canEdit ? 'Start writing…' : 'This document is read-only'}
-        />
-        <TypingIndicator users={remoteUsers} />
+        <div className="doc-editor-column">
+          <Editor
+            key={reloadKey}
+            ydoc={provider?.doc}
+            awarenessProvider={provider?.wsProvider}
+            user={me ? { name: me.name, color: me.color } : undefined}
+            onActivity={markActive}
+            onSelectionChange={setSelection}
+            onReplaceSelectionReady={replace => { replaceSelectionRef.current = replace }}
+            editable={canEdit}
+            placeholder={canEdit ? 'Start writing…' : 'This document is read-only'}
+          />
+          <TypingIndicator users={remoteUsers} />
+        </div>
+
+        {user && (selection.hasSelection || Boolean(lastAIApply)) && (
+          <AISidePanel
+            documentId={doc.id}
+            userId={user.id}
+            selectedText={selection.text}
+            hasSelection={selection.hasSelection}
+            canEdit={canEdit}
+            canUndo={Boolean(lastAIApply)}
+            onAccept={handleAcceptAIText}
+            onUndo={handleUndoAIText}
+          />
+        )}
       </div>
 
       <VersionHistory

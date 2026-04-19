@@ -1,6 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 
-const BASE_URL = '/api/v1'
+export const BASE_URL = '/api/v1'
 
 const REFRESH_TOKEN_KEY = 'refresh_token'
 
