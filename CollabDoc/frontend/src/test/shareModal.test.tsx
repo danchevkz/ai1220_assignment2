@@ -242,4 +242,34 @@ describe('ShareModal', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/user not found/i)
     })
   })
+
+  it('closes on Escape keydown while open', async () => {
+    const onClose = vi.fn()
+    render(
+      <ShareModal
+        document={makeDoc()}
+        currentUserId="owner-1"
+        open={true}
+        onClose={onClose}
+        onChanged={vi.fn()}
+      />,
+    )
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not listen for Escape while closed', async () => {
+    const onClose = vi.fn()
+    render(
+      <ShareModal
+        document={makeDoc()}
+        currentUserId="owner-1"
+        open={false}
+        onClose={onClose}
+        onChanged={vi.fn()}
+      />,
+    )
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })

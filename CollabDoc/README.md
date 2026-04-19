@@ -113,6 +113,7 @@ On the server side `ypy-websocket` handles the `sync` protocol and broadcasts aw
 - **Offline-first on the client.** `y-indexeddb` persists every `Y.Doc` locally so edits made while disconnected are queued and reconciled on reconnect. The connection status is surfaced in the UI so users know when they're offline.
 - **Awareness is separate from content.** Cursors, colours (derived from a stable hash of user id — see [`src/collab/identity.ts`](frontend/src/collab/identity.ts)) and "is typing" signals flow through the awareness channel and never touch the Y.Doc, so they can't pollute version history.
 - **Snapshots for versions.** When a client opens the Version History drawer, the REST endpoint `GET /documents/:id/versions` asks the live Yjs room for its current state vector, compares it with the latest stored version, and only appends a snapshot if the document has actually changed.
+- **Restore is collaborative, not atomic.** When a user restores a previous version, the backend replays that snapshot into the live Yjs room; every connected client converges to the restored state via standard CRDT merge. A collaborator's edit that was in-flight at the moment of restore is not lost — it merges on top of the restored state, exactly as if the user had typed it immediately after. This is intentional: restoring a version should behave like any other collaborative edit, not freeze the document for everyone else.
 
 ### AI concurrent-edit strategy
 

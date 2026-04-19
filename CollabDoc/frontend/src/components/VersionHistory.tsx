@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { documentsApi } from '../api/documents'
 import { extractError } from '../api/errors'
+import { useEscapeKey } from '../hooks/useEscapeKey'
 import type { DocumentVersion } from '../types'
 
 interface Props {
@@ -63,6 +64,8 @@ export default function VersionHistory({
     }
   }
 
+  useEscapeKey(onClose, open)
+
   if (!open) return null
 
   return (
@@ -88,6 +91,7 @@ export default function VersionHistory({
                 <button
                   className={`version-item ${preview?.version === v.version ? 'version-item-active' : ''}`}
                   onClick={() => setPreview(v)}
+                  aria-label={`Preview version ${v.version}, saved ${formatDate(v.saved_at)} by ${v.saved_by}`}
                 >
                   <span className="version-num">v{v.version}</span>
                   <span className="version-date">{formatDate(v.saved_at)}</span>

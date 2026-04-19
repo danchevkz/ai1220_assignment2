@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { documentsApi } from '../api/documents'
 import { extractError } from '../api/errors'
+import { useEscapeKey } from '../hooks/useEscapeKey'
 import ShareLinksPanel from './ShareLinksPanel'
 import type { Document, DocumentCollaborator, DocumentRole } from '../types'
 
@@ -28,6 +29,8 @@ export default function ShareModal({ document, currentUserId, open, onClose, onC
       setError(null)
     }
   }, [open])
+
+  useEscapeKey(onClose, open)
 
   if (!open) return null
 

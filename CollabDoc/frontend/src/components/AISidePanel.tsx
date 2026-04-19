@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAISuggestion } from '../hooks/useAISuggestion'
+import { useEscapeKey } from '../hooks/useEscapeKey'
 import { acceptedText, combinedText, isStreaming, isTerminal } from '../ai/aiState'
 import type { AIAction } from '../types'
 
@@ -46,6 +47,8 @@ export default function AISidePanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+
+  useEscapeKey(onClose, open)
 
   if (!open) return null
 

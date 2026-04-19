@@ -9,6 +9,7 @@ import PresenceStack from '../components/PresenceStack'
 import TypingIndicator from '../components/TypingIndicator'
 import AISidePanel from '../components/AISidePanel'
 import AIHistoryList from '../components/AIHistoryList'
+import OfflineBanner from '../components/OfflineBanner'
 import { documentsApi } from '../api/documents'
 import { extractError } from '../api/errors'
 import { useAutoSave } from '../hooks/useAutoSave'
@@ -36,6 +37,12 @@ export default function DocumentPage() {
   const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null)
 
   // Bumped after restore to force a full Y.Doc rebuild from the server.
+  // Restore is client-initiated and not atomic across all connected clients:
+  // the backend replays the chosen snapshot into the WS room, which converges
+  // every client via Yjs. A collaborator's edit that was in-flight at the
+  // moment of restore merges via CRDT semantics — it is not lost, but it lands
+  // on top of the restored state. This is intentional collaborative behavior,
+  // not a race condition to fix here.
   const [reloadKey, setReloadKey] = useState(0)
 
   // Content is owned by Yjs — the editor binds to provider.doc directly.
@@ -137,6 +144,7 @@ export default function DocumentPage() {
 
   return (
     <div className="doc-page">
+      <OfflineBanner status={connStatus} />
       <div className="doc-page-header">
         <Link to="/" className="doc-back-link">← Back</Link>
 

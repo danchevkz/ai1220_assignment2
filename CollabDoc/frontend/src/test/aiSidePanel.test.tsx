@@ -353,4 +353,10 @@ describe('AISidePanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /apply all/i }))
     expect(onApply).toHaveBeenCalledWith('edited', true)
   })
+
+  it('closes on Escape keydown while open', async () => {
+    const { onClose } = renderPanel({ open: true })
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 })

@@ -28,9 +28,27 @@ export function useCollaborativeDoc(
   const [provider, setProvider] = useState<YjsProvider | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('offline')
   const [synced, setSynced] = useState(false)
+  // Internal counter bumped when auth bootstrap finishes after the hook
+  // mounted without a token. Forces the main effect to re-run.
+  const [authRetryKey, setAuthRetryKey] = useState(0)
 
   // Keep the live ref so StrictMode double-invoke doesn't leak two providers.
   const currentRef = useRef<YjsProvider | null>(null)
+
+  // While we don't yet have a token, listen for auth:tokenRefreshed (fired by
+  // api/client on a successful /auth/refresh, including the bootstrap call)
+  // and bump authRetryKey so the main effect re-runs. Without this, a
+  // deep-link paste that lands while bootstrap is in flight leaves the Yjs
+  // provider null until some unrelated parent-side dependency changes.
+  useEffect(() => {
+    if (!documentId) return
+    if (getAccessToken()) return
+    const onTokenRefreshed = () => {
+      if (getAccessToken()) setAuthRetryKey(k => k + 1)
+    }
+    window.addEventListener('auth:tokenRefreshed', onTokenRefreshed)
+    return () => window.removeEventListener('auth:tokenRefreshed', onTokenRefreshed)
+  }, [documentId, authRetryKey])
 
   useEffect(() => {
     if (!documentId) return
@@ -38,7 +56,8 @@ export function useCollaborativeDoc(
     const token = getAccessToken()
     if (!token) {
       // No token yet — the axios bootstrap probably hasn't finished.
-      // Bail; the caller will re-render when auth is ready.
+      // The sibling effect above listens for auth:tokenRefreshed and will
+      // bump authRetryKey once the token materializes.
       return
     }
 
@@ -80,7 +99,7 @@ export function useCollaborativeDoc(
         setStatus('offline')
       }
     }
-  }, [documentId, reloadKey])
+  }, [documentId, reloadKey, authRetryKey])
 
   return { provider, status, synced }
 }
