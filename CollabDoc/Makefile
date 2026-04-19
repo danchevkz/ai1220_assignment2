@@ -3,6 +3,8 @@
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 BACKEND_PYTHON := $(BACKEND_DIR)/.venv/bin/python
+BACKEND_PORT := 8000
+FRONTEND_PORT := 5173
 
 $(BACKEND_PYTHON):
 	python3 -m venv $(BACKEND_DIR)/.venv
@@ -23,10 +25,24 @@ dev:
 	$(MAKE) -j2 dev-backend dev-frontend
 
 dev-backend: $(BACKEND_PYTHON)
-	cd $(BACKEND_DIR) && ./.venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	@backend_listen="$$(lsof -nP -iTCP:$(BACKEND_PORT) -sTCP:LISTEN 2>/dev/null)"; \
+	if [ -n "$$backend_listen" ]; then \
+		echo "Backend already running on http://localhost:$(BACKEND_PORT):"; \
+		echo "$$backend_listen"; \
+	else \
+		echo "Starting backend on http://localhost:$(BACKEND_PORT)"; \
+		cd $(BACKEND_DIR) && ./.venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT); \
+	fi
 
 dev-frontend:
-	cd $(FRONTEND_DIR) && npm run dev
+	@frontend_listen="$$(lsof -nP -iTCP:$(FRONTEND_PORT) -sTCP:LISTEN 2>/dev/null)"; \
+	if [ -n "$$frontend_listen" ]; then \
+		echo "Frontend already running on http://localhost:$(FRONTEND_PORT):"; \
+		echo "$$frontend_listen"; \
+	else \
+		echo "Starting frontend on http://localhost:$(FRONTEND_PORT)"; \
+		cd $(FRONTEND_DIR) && npm run dev; \
+	fi
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
