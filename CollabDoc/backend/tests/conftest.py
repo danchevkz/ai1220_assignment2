@@ -22,5 +22,11 @@ def reset_state():
 
 @pytest.fixture()
 def client():
-    with TestClient(app) as c:
+    c = TestClient(app)
+    try:
         yield c
+    finally:
+        try:
+            c.close()
+        except Exception:
+            pass

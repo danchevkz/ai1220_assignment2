@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -12,6 +11,15 @@ from ypy_websocket.ystore import FileYStore
 from app.core.config import settings
 from app.core.security import decode_token
 from app.models.store import store
+
+
+# Yjs wire-protocol constants.
+# https://github.com/y-crdt/ypy-websocket/blob/main/ypy_websocket/yutils.py
+_YJS_TYPE_SYNC = 0
+_YJS_TYPE_AWARENESS = 1
+_YJS_SYNC_STEP1 = 0   # client → server: state-vector request (READ)
+_YJS_SYNC_STEP2 = 1   # client → server: state apply (MUTATION)
+_YJS_SYNC_UPDATE = 2  # client → server: incremental update (MUTATION)
 
 
 class PersistentWebsocketServer(WebsocketServer):
@@ -39,8 +47,12 @@ class PersistentWebsocketServer(WebsocketServer):
         return room
 
     async def snapshot(self, room_name: str) -> bytes:
-        room = await self.get_room(room_name)
-        return Y.encode_state_as_update(room.ydoc)
+        persisted_doc = Y.YDoc()
+        try:
+            await FileYStore(str(self._store_path(room_name))).apply_updates(persisted_doc)
+        except Exception:
+            pass
+        return Y.encode_state_as_update(persisted_doc)
 
     async def restore(self, room_name: str, snapshot: bytes) -> None:
         path = self._store_path(room_name)
@@ -71,33 +83,103 @@ async def ensure_websocket_server_running() -> None:
 
 
 async def stop_websocket_server() -> None:
-    if getattr(websocket_server, "_task_group", None) is not None:
-        await websocket_server.__aexit__(None, None, None)
+    if getattr(websocket_server, "_task_group", None) is None:
+        return
+
+    # Best-effort shutdown: during FastAPI/TestClient lifespan teardown we can
+    # end up in a different task context than the AnyIO cancel scope that
+    # created the websocket server. Reset local room state without awaiting the
+    # original task-group exit path so app shutdown stays clean.
+    for room in list(websocket_server.rooms.values()):
+        try:
+            room.stop()
+        except Exception:
+            pass
+    websocket_server.rooms = {}
+    websocket_server._task_group = None
+    websocket_server._started = None
 
 
-async def on_connect(_message: dict, scope: dict) -> bool:
+def is_yjs_mutation(message: bytes) -> bool:
+    """True for client→server messages that mutate the shared YDoc.
+
+    A read-only viewer must not be allowed to send these. We still allow:
+      - SYNC_STEP1 (state-vector request — server replies with current state)
+      - AWARENESS (presence/cursor; doesn't touch shared content)
+    """
+    if len(message) < 2:
+        return False
+    if message[0] != _YJS_TYPE_SYNC:
+        return False
+    return message[1] in (_YJS_SYNC_STEP2, _YJS_SYNC_UPDATE)
+
+
+class ReadOnlyWebsocketWrapper:
+    """Per-connection filter that strips Yjs document-mutation messages.
+
+    Wraps an inner Websocket so that the YRoom's `async for message in
+    websocket:` loop never sees a viewer's attempted writes. Sends from the
+    server side pass through unchanged so the viewer still receives updates
+    other clients make.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    @property
+    def path(self) -> str:
+        return self._inner.path
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> bytes:
+        # Skip any mutation message; let everything else through.
+        while True:
+            message = await self._inner.__anext__()
+            if not is_yjs_mutation(message):
+                return message
+
+    async def recv(self) -> bytes:
+        while True:
+            message = await self._inner.recv()
+            if not is_yjs_mutation(message):
+                return message
+
+    async def send(self, message: bytes) -> None:
+        await self._inner.send(message)
+
+
+async def authorize_connection(scope: dict) -> str | None:
+    """Authenticate a websocket upgrade and resolve the user's role on the
+    requested document. Returns the role string ("owner" / "editor" / "viewer")
+    when the connection should be accepted, or None to reject.
+    """
     query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
     token = query.get("token", [None])[0]
     if not token:
-        return True
+        return None
     try:
         claims = decode_token(token)
     except ValueError:
-        return True
+        return None
     if claims.get("type") != "access":
-        return True
+        return None
     user = store.get_user(claims.get("sub", ""))
     if user is None:
-        return True
+        return None
     path = normalize_room_name(scope.get("path", ""))
     doc_id = path.rsplit("/", 1)[-1]
     doc = store.get_document(doc_id)
     if doc is None:
-        return True
-    role = doc.collaborators.get(user.id)
-    if role is None:
-        return True
-    return False
+        return None
+    return doc.collaborators.get(user.id)
+
+
+async def on_connect(_message: dict, scope: dict) -> bool:
+    # Kept for backwards-compatibility: returns True to deny the connection.
+    role = await authorize_connection(scope)
+    return role is None
 
 
 class CollaborationASGIApp:
@@ -112,8 +194,8 @@ class CollaborationASGIApp:
             if msg["type"] != "websocket.connect":
                 return
 
-            close = await on_connect(msg, scope)
-            if close:
+            role = await authorize_connection(scope)
+            if role is None:
                 await send({"type": "websocket.close", "code": 1008})
                 return
 
@@ -122,11 +204,12 @@ class CollaborationASGIApp:
 
             from ypy_websocket.asgi_server import ASGIWebsocket
 
-            websocket = ASGIWebsocket(
+            inner = ASGIWebsocket(
                 receive,
                 send,
                 normalize_room_name(scope.get("path", "")),
             )
+            websocket = ReadOnlyWebsocketWrapper(inner) if role == "viewer" else inner
             await self._websocket_server.serve(websocket)
         except Exception:
             if not accepted:

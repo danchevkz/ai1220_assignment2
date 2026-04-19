@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import y_py as Y
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
-from app.models.store import DocumentRecord, DocumentRole, UserRecord, VersionRecord, store
+from app.models.store import DocumentRecord, DocumentRole, UserRecord, VersionRecord, store, utcnow
 from app.schemas.documents import (
     CreateDocumentRequest,
     CreateShareLinkRequest,
@@ -18,6 +19,57 @@ from app.schemas.documents import (
     UpdateDocumentRequest,
 )
 from app.websocket.collaboration import normalize_room_name, websocket_server
+
+
+def is_empty_yjs_snapshot(snapshot: bytes | None) -> bool:
+    """A Yjs `encode_state_as_update` of a freshly-constructed YDoc is the
+    2-byte sentinel \\x00\\x00. Treat that — and missing snapshots — as
+    "no usable collaborative content yet"."""
+    if not snapshot:
+        return True
+    return snapshot == b"\x00\x00"
+
+
+def content_from_yjs_snapshot(snapshot: bytes) -> str | None:
+    """Best-effort extract a serialized text representation from a Yjs binary
+    snapshot. Returns None if extraction yields nothing usable; callers should
+    fall back to existing REST `doc.content` in that case."""
+    try:
+        ydoc = Y.YDoc()
+        Y.apply_update(ydoc, snapshot)
+    except Exception:
+        return None
+
+    # TipTap's Collaboration extension stores its prosemirror state under the
+    # XmlFragment named "default". y-py exposes it via get_xml_element.
+    pieces: list[str] = []
+    try:
+        xml = ydoc.get_xml_element("default")
+        rendered = str(xml).strip()
+        # y-py wraps top-level fragments with <UNDEFINED>…</UNDEFINED>; strip that.
+        if rendered.startswith("<UNDEFINED>") and rendered.endswith("</UNDEFINED>"):
+            rendered = rendered[len("<UNDEFINED>"):-len("</UNDEFINED>")]
+        if rendered:
+            pieces.append(rendered)
+    except Exception:
+        pass
+
+    # Plain Y.Text fallback (some clients may store under "default" as text).
+    try:
+        text = str(ydoc.get_text("default")).strip()
+        if text and text not in pieces:
+            pieces.append(text)
+    except Exception:
+        pass
+
+    combined = "".join(pieces).strip()
+    return combined or None
+
+
+# Cache the latest live collaborative snapshot exposed through GET /versions so
+# the endpoint stays read-only while restore can still target the previewed
+# snapshot the user saw in the drawer.
+_live_version_cache: dict[str, VersionRecord] = {}
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -93,6 +145,39 @@ def serialize_version(version: VersionRecord) -> DocumentVersionRead:
     )
 
 
+def live_version_for(doc: DocumentRecord, snapshot: bytes | None) -> VersionRecord | None:
+    cached = _live_version_cache.get(doc.id)
+    if snapshot is None or is_empty_yjs_snapshot(snapshot):
+        _live_version_cache.pop(doc.id, None)
+        return None
+
+    if any(version.yjs_snapshot == snapshot for version in doc.versions):
+        _live_version_cache.pop(doc.id, None)
+        return None
+
+    extracted = content_from_yjs_snapshot(snapshot)
+    content = extracted if extracted is not None else doc.content
+    version_number = doc.version + 1
+
+    if (
+        cached is not None
+        and cached.version == version_number
+        and cached.yjs_snapshot == snapshot
+        and cached.content == content
+    ):
+        return cached
+
+    live_version = VersionRecord(
+        version=version_number,
+        content=content,
+        saved_at=utcnow(),
+        saved_by="autosave",
+        yjs_snapshot=snapshot,
+    )
+    _live_version_cache[doc.id] = live_version
+    return live_version
+
+
 @router.get("", response_model=list[DocumentSummaryRead])
 def list_documents(current_user: UserRecord = Depends(get_current_user)) -> list[DocumentSummaryRead]:
     docs = []
@@ -133,6 +218,7 @@ def update_document(
         store.touch_document(doc)
     if payload.content is not None and payload.content != doc.content:
         store.set_document_content(doc, payload.content, current_user.username)
+        _live_version_cache.pop(doc.id, None)
     return serialize_document(doc)
 
 
@@ -140,6 +226,7 @@ def update_document(
 def delete_document(document_id: str, current_user: UserRecord = Depends(get_current_user)) -> None:
     doc = require_document(document_id)
     require_role(doc, current_user.id, {"owner"})
+    _live_version_cache.pop(doc.id, None)
     store.documents.pop(doc.id, None)
 
 
@@ -275,25 +362,21 @@ async def list_versions(
 ) -> list[DocumentVersionRead]:
     doc = require_document(document_id)
     require_role(doc, current_user.id, {"owner", "editor", "viewer"})
-    room_name = normalize_room_name(doc.id)
-    try:
-        snapshot = await websocket_server.snapshot(room_name)
-    except Exception:
-        snapshot = None
-    if snapshot and (not doc.versions or doc.versions[-1].yjs_snapshot != snapshot):
-        doc.versions.append(
-            VersionRecord(
-                version=doc.version,
-                content=doc.content,
-                saved_at=doc.updated_at,
-                saved_by="system",
-                yjs_snapshot=snapshot,
-            )
-        )
+
+    # Surface the current collaborative state without mutating persisted
+    # version history. If it hasn't been checkpointed yet, expose it as a
+    # transient live version that restore can still target.
+    live_version = live_version_for(doc, await _safe_snapshot(doc.id))
+
+    # Dedupe by version number (defensive — list is append-only) and return
+    # in stable ascending order.
     deduped: dict[int, VersionRecord] = {}
     for version in doc.versions:
         deduped[version.version] = version
-    return [serialize_version(version) for version in deduped.values()]
+    if live_version is not None:
+        deduped[live_version.version] = live_version
+    ordered = sorted(deduped.values(), key=lambda v: v.version)
+    return [serialize_version(version) for version in ordered]
 
 
 @router.post("/{document_id}/versions/{version_number}/restore", response_model=DocumentRead)
@@ -306,26 +389,49 @@ async def restore_version(
     require_role(doc, current_user.id, {"owner", "editor"})
     selected = next((version for version in doc.versions if version.version == version_number), None)
     if selected is None:
+        live_version = _live_version_cache.get(doc.id)
+        if live_version is not None and live_version.version == version_number:
+            selected = live_version
+    if selected is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
 
-    current_snapshot = None
-    try:
-        current_snapshot = await websocket_server.snapshot(normalize_room_name(doc.id))
-    except Exception:
-        pass
+    # Snapshot the live collaborative state (if any) BEFORE we restore, so the
+    # current state is itself preserved as a recoverable version. Use the live
+    # Yjs content rather than the possibly-stale REST `doc.content`.
+    pre_restore_snapshot = await _safe_snapshot(doc.id)
+    pre_restore_content: str
+    if pre_restore_snapshot is not None and not is_empty_yjs_snapshot(pre_restore_snapshot):
+        extracted = content_from_yjs_snapshot(pre_restore_snapshot)
+        pre_restore_content = extracted if extracted is not None else doc.content
+    else:
+        pre_restore_snapshot = None
+        pre_restore_content = doc.content
+
     doc.version += 1
     doc.versions.append(
         VersionRecord(
             version=doc.version,
-            content=doc.content,
-            saved_at=doc.updated_at,
+            content=pre_restore_content,
+            saved_at=utcnow(),
             saved_by=current_user.username,
-            yjs_snapshot=current_snapshot,
+            yjs_snapshot=pre_restore_snapshot,
         )
     )
 
-    doc.content = selected.content
-    store.touch_document(doc)
-    if selected.yjs_snapshot is not None:
+    # Restore the collaborative state to exactly what was saved. Skip the
+    # collaborative restore if the saved version has no snapshot (REST-only
+    # version) so we don't wipe the live YDoc with empty state.
+    if selected.yjs_snapshot is not None and not is_empty_yjs_snapshot(selected.yjs_snapshot):
         await websocket_server.restore(normalize_room_name(doc.id), selected.yjs_snapshot)
+
+    doc.content = selected.content
+    _live_version_cache.pop(doc.id, None)
+    store.touch_document(doc)
     return serialize_document(doc)
+
+
+async def _safe_snapshot(document_id: str) -> bytes | None:
+    try:
+        return await websocket_server.snapshot(normalize_room_name(document_id))
+    except Exception:
+        return None

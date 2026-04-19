@@ -1,3 +1,6 @@
+from app.models.store import store
+
+
 def register_and_login(client, username: str, email: str, password: str = "password123"):
     user = client.post(
         "/api/v1/auth/register",
@@ -397,6 +400,269 @@ def test_non_collaborator_cannot_use_ai_endpoints(client):
         headers=outsider_headers,
     )
     assert resp.status_code == 403, resp.text
+
+
+def _token_for(headers: dict[str, str]) -> str:
+    return headers["Authorization"].split(" ", 1)[1]
+
+
+def _make_yjs_update_message(text_value: str) -> bytes:
+    """Build a real Yjs SYNC_UPDATE wire-frame inserting `text_value` into
+    a Y.Text named "default". Used to prove that viewer mutations are dropped
+    server-side rather than relying on UI guards."""
+    import y_py as Y
+    from ypy_websocket.yutils import create_update_message
+
+    doc = Y.YDoc()
+    text = doc.get_text("default")
+    with doc.begin_transaction() as txn:
+        text.insert(txn, 0, text_value)
+    return create_update_message(Y.encode_state_as_update(doc))
+
+
+def _read_room_state(document_id: str) -> bytes:
+    """Read the current YDoc state for a document (sync wrapper around the
+    async server API)."""
+    import asyncio
+    from app.websocket.collaboration import (
+        ensure_websocket_server_running,
+        normalize_room_name,
+        websocket_server,
+    )
+
+    async def go() -> bytes:
+        await ensure_websocket_server_running()
+        return await websocket_server.snapshot(normalize_room_name(document_id))
+
+    return asyncio.run(go())
+
+
+def _inject_into_room(document_id: str, text_value: str) -> None:
+    """Directly mutate the live YDoc in the collaboration room — simulates the
+    effect of an editor having already collaborated through Yjs without having
+    to drive the full websocket handshake from a sync test."""
+    import asyncio
+    import y_py as Y
+    from app.websocket.collaboration import (
+        ensure_websocket_server_running,
+        normalize_room_name,
+        websocket_server,
+    )
+
+    async def go() -> None:
+        await ensure_websocket_server_running()
+        room = await websocket_server.get_room(normalize_room_name(document_id))
+        text = room.ydoc.get_text("default")
+        with room.ydoc.begin_transaction() as txn:
+            text.insert(txn, 0, text_value)
+        if room.ystore is not None:
+            await room.ystore.write(Y.encode_state_as_update(room.ydoc))
+
+    asyncio.run(go())
+
+
+def test_viewer_websocket_can_connect_and_read(client):
+    """A viewer should still be able to open the collab WS and receive the
+    initial sync handshake — only mutations must be blocked."""
+    owner, owner_headers = register_and_login(client, "rvowner", "rvowner@example.com")
+    viewer, viewer_headers = register_and_login(client, "rvviewer", "rvviewer@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "ROView"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(viewer_headers)}") as ws:
+        first = ws.receive_bytes()
+        # Server greets with a SYNC message (sync_step1) so the read path works.
+        assert first[0] == 0
+
+
+def test_viewer_yjs_mutation_is_dropped_server_side(client):
+    """A crafted viewer client cannot inject document updates — even when the
+    frontend protections are bypassed. The mutation must be filtered before it
+    reaches the YRoom."""
+    owner, owner_headers = register_and_login(client, "vmoowner", "vmoowner@example.com")
+    viewer, viewer_headers = register_and_login(client, "vmoviewer", "vmoviewer@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "MutBlock"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": viewer["email"], "role": "viewer"},
+        headers=owner_headers,
+    )
+
+    payload = "VIEWER_INJECTED_MUTATION"
+    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(viewer_headers)}") as ws:
+        ws.receive_bytes()  # drain server's sync_step1
+        ws.send_bytes(_make_yjs_update_message(payload))
+
+    import y_py as Y
+    server_state = _read_room_state(document_id)
+    server_doc = Y.YDoc()
+    Y.apply_update(server_doc, server_state)
+    text = str(server_doc.get_text("default"))
+    assert payload not in text, "Viewer mutation should never be applied server-side"
+
+
+def test_editor_yjs_mutation_propagates(client):
+    """Sanity-check the negative case: an editor's update IS applied — the
+    read-only filter must not break collaboration for allowed roles."""
+    owner, owner_headers = register_and_login(client, "edmowner", "edmowner@example.com")
+    editor, editor_headers = register_and_login(client, "edmeditor", "edmeditor@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "EdPropagate"}, headers=owner_headers
+    ).json()["id"]
+    client.post(
+        f"/api/v1/documents/{document_id}/share",
+        json={"username_or_email": editor["email"], "role": "editor"},
+        headers=owner_headers,
+    )
+
+    payload = "EDITOR_WROTE_THIS"
+    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(editor_headers)}") as ws:
+        ws.receive_bytes()  # drain server's sync_step1
+        ws.send_bytes(_make_yjs_update_message(payload))
+        # Pull a few frames so the server has time to process before disconnect.
+        try:
+            for _ in range(3):
+                ws.receive_bytes()
+        except Exception:
+            pass
+
+    import y_py as Y
+    server_state = _read_room_state(document_id)
+    server_doc = Y.YDoc()
+    Y.apply_update(server_doc, server_state)
+    assert payload in str(server_doc.get_text("default"))
+
+
+def test_owner_yjs_mutation_propagates(client):
+    """Owners must also be able to write through Yjs."""
+    owner, owner_headers = register_and_login(client, "ownmtowner", "ownmt@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "OwnerWrite"}, headers=owner_headers
+    ).json()["id"]
+
+    payload = "OWNER_WROTE_THIS"
+    with client.websocket_connect(f"/ws/{document_id}?token={_token_for(owner_headers)}") as ws:
+        ws.receive_bytes()
+        ws.send_bytes(_make_yjs_update_message(payload))
+        try:
+            for _ in range(3):
+                ws.receive_bytes()
+        except Exception:
+            pass
+
+    import y_py as Y
+    server_state = _read_room_state(document_id)
+    server_doc = Y.YDoc()
+    Y.apply_update(server_doc, server_state)
+    assert payload in str(server_doc.get_text("default"))
+
+
+# ── M3: Version history must reflect collaborative state ─────────────────────
+
+def test_versions_get_does_not_create_duplicates(client):
+    """Calling GET /versions repeatedly must be idempotent — listing versions
+    is a read, it should never spawn duplicate snapshots or corrupt numbering."""
+    owner, headers = register_and_login(client, "vidup_owner", "vidup@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "VerDup"}, headers=headers
+    ).json()["id"]
+    # Add some real collab state once.
+    _inject_into_room(document_id, "shared edit")
+    doc = store.get_document(document_id)
+    assert doc is not None
+    original_version = doc.version
+    original_count = len(doc.versions)
+
+    first = client.get(f"/api/v1/documents/{document_id}/versions", headers=headers)
+    assert first.status_code == 200
+    first_versions = first.json()
+    second = client.get(f"/api/v1/documents/{document_id}/versions", headers=headers)
+    third = client.get(f"/api/v1/documents/{document_id}/versions", headers=headers)
+    assert second.json() == first_versions
+    assert third.json() == first_versions
+
+    version_numbers = [v["version"] for v in first_versions]
+    assert len(version_numbers) == len(set(version_numbers)), "duplicate version numbers"
+    assert doc.version == original_version, "GET /versions must not increment the persisted version"
+    assert len(doc.versions) == original_count, "GET /versions must not append persisted versions"
+
+
+def test_versions_capture_collab_edit(client):
+    """A pure Yjs edit (no REST PATCH) must surface in version history with
+    the actual collaborative content as the preview."""
+    owner, headers = register_and_login(client, "vcol_owner", "vcol@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "Collab Capture"}, headers=headers
+    ).json()["id"]
+
+    _inject_into_room(document_id, "collab-only edit")
+
+    versions = client.get(f"/api/v1/documents/{document_id}/versions", headers=headers).json()
+    assert any("collab-only edit" in v["content"] for v in versions), (
+        f"collab content missing from version history: {versions}"
+    )
+
+
+def test_versions_empty_yjs_does_not_wipe_rest_content(client):
+    """If the Yjs room is missing or empty, list_versions must NOT clobber the
+    REST-authored versions with an empty placeholder."""
+    owner, headers = register_and_login(client, "vempty_owner", "vempty@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "EmptyYjs"}, headers=headers
+    ).json()["id"]
+    client.patch(
+        f"/api/v1/documents/{document_id}",
+        json={"content": "<p>REST content</p>"},
+        headers=headers,
+    )
+
+    versions = client.get(f"/api/v1/documents/{document_id}/versions", headers=headers).json()
+    assert any(v["content"] == "<p>REST content</p>" for v in versions)
+    # No autosave version with empty content should have been inserted.
+    assert all(v["content"] != "" or v["version"] == 1 for v in versions), (
+        f"empty placeholder version inserted: {versions}"
+    )
+
+
+def test_restore_brings_back_collab_state(client):
+    """Restoring a version must replay the saved Yjs snapshot into the live
+    room so subsequent reads see the restored collaborative state."""
+    import y_py as Y
+
+    owner, headers = register_and_login(client, "restore_owner", "restore@example.com")
+    document_id = client.post(
+        "/api/v1/documents", json={"title": "Restore Doc"}, headers=headers
+    ).json()["id"]
+
+    _inject_into_room(document_id, "v_alpha ")
+    versions = client.get(f"/api/v1/documents/{document_id}/versions", headers=headers).json()
+    captured_version = max(v["version"] for v in versions)
+
+    # Mutate the live room past the captured version.
+    _inject_into_room(document_id, "v_beta ")
+
+    restored = client.post(
+        f"/api/v1/documents/{document_id}/versions/{captured_version}/restore",
+        headers=headers,
+    )
+    assert restored.status_code == 200, restored.text
+
+    # Live room must now equal the restored snapshot — it should contain
+    # v_alpha (the captured state) but NOT v_beta (the post-capture mutation).
+    state = _read_room_state(document_id)
+    doc = Y.YDoc()
+    Y.apply_update(doc, state)
+    text = str(doc.get_text("default"))
+    assert "v_alpha" in text
+    assert "v_beta" not in text
 
 
 def test_websocket_requires_access_token_and_document_access(client):
