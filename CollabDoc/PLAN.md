@@ -47,7 +47,7 @@ Cross-cutting (tests, docs, demo) is shared.
 - [x] Agree on **share-by-link** endpoint shape: client now expects `GET /documents/:id/share-links` (list), `POST /documents/:id/share-links` body `{ role, expires_in_hours: number | null }` → `ShareLink { token, role, created_at, expires_at: string | null, created_by }`, and `DELETE /documents/:id/share-links/:token`. Public landing route at `/share/:token` is wired (`pages/ShareRedeem.tsx`) — unauthed users bounce to `/login` with `from` state and come back automatically. **Action for Yintong**: confirm / implement `POST /share-links/:token/redeem` → `Document` (adds caller as collaborator with the token's role, 404 if expired/revoked). Frontend currently calls this shape.
 - [x] Confirm backend exposes **`PATCH /documents/:id/collaborators/:userId`** (body `{ role }`) and **`DELETE /documents/:id/collaborators/:userId`** — both return the updated `Document`. Implemented by Yintong in [`backend/app/api/routes/documents.py`](backend/app/api/routes/documents.py) (handlers `update_collaborator` / `delete_collaborator`, owner-only, rejects owner role changes). Used by ShareModal access list.
 - [x] **AI SSE format agreed** (Anel PR #1): backend streams `{ request_id, operation, delta, done }`. Frontend adapter in `api/ai.ts` translates to internal events; paragraph-splits on `done: true` for per-paragraph partial accept (bonus #4). Endpoints: `POST /ai/rewrite/stream`, `POST /ai/summarize/stream`, `GET /ai/history/:docId?user_id=`, `POST /ai/generations/:id/cancel`. **Resolution**: Yintong's `app/api/routes/ai.py` is the mounted implementation; matches the agreed shape. Anel's `app/ai/router.py` remains in-tree as a parallel module but is not mounted — no frontend changes needed.
-- [ ] Branch/PR strategy: feature branches + PRs with reviews. Rubric flags "single final commit" as a red flag.
+- [x]] Branch/PR strategy: feature branches + PRs with reviews. Rubric flags "single final commit" as a red flag.
 
 ---
 
@@ -78,7 +78,7 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 - [x] **Yjs integration**: `Y.Doc` per document, `@tiptap/extension-collaboration`. Owner: Alexander.
 - [x] **WS provider**: `y-websocket` client, token passed via `params` → `?token=`. Owner: Alexander. Partner: Yintong.
-- [ ] **Two-tab sync proof**: character-level edits propagate < 500ms locally. _Blocked on backend WS endpoint._ Owner: Alexander. Partner: Yintong.
+- [x] **Two-tab sync proof**: character-level edits propagate < 500ms locally. _Blocked on backend WS endpoint._ Owner: Alexander. Partner: Yintong.
 - [x] **Connection lifecycle** (client side): `YjsProvider` status machine `offline → connecting → connected → disconnected`, surfaced to UI; `y-websocket` handles reconnect. Owner: Yintong. Partner: Alexander.
 - [x] **Offline editing**: `y-indexeddb` persistence; queue survives reload; reconciles on reconnect. Owner: Alexander. Partner: Yintong.
 - [x] Tests: YjsProvider unit tests (mocked WS) + ConnectionStatus component. (14 new tests, 32/32 total passing) Owner: Alexander. Partner: Yintong.
@@ -112,7 +112,7 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ### Phase 7 — Quality & docs
 
-- [ ] **Component tests** (Vitest + RTL): auth form, editor toolbar, AI suggestion panel, presence list. Owner: Alexander. Partner: Anel.
+- [x] **Component tests** (Vitest + RTL): auth form, editor toolbar, AI suggestion panel, presence list. Owner: Alexander. Partner: Anel.
 - [x] **E2E tests** (Playwright, bonus #5): `frontend/e2e/` — 8 specs, single worker (backend state is shared). Auth ×4 (register, protected redirect, login-after-register, invalid login), golden-path ×3 (rich-text + title auto-save, AI rewrite streaming + partial-accept, version history drawer + restore), collaboration ×1 (two browser contexts, share-by-link redeem, bidirectional WS propagation). Playwright `webServer` boots Vite on :5199 (backend assumed on :8000, `make dev-backend`). Run via `make test-e2e` or `npm run test:e2e`. Owner: Alexander.
 - [x] **README**: auth lifecycle diagram (REST + WS), y-websocket binary wire protocol table, collab strategy (CRDT + offline + awareness + snapshot-for-versions), AI concurrent-edit strategy, corrected API table + project structure, testing matrix, bonus-item summary. Owner: Yintong → completed by Alexander. Partners: Alexander, Anel.
 - [x] **Module READMEs**: short purpose note added in `backend/app/api/routes`, `backend/app/core`, `backend/app/models`, `backend/app/schemas`, `backend/app/services/ai`, `backend/app/websocket`, and `frontend/src/{ai,api,collab,components,hooks,pages,store,types}`. Owner: Yintong → completed by Alexander.
@@ -122,8 +122,8 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 
 ### Phase 8 — Demo prep
 
-- [ ] Rehearse the 5-minute demo in the exact spec order: register → create → rich-text + auto-save → share with role enforcement → two-window collab → AI streaming (two features, suggestion UX, cancel) → version restore. Owner: Alexander. Partners: Yintong, Anel.
-- [ ] Prepare Q&A answers: JWT refresh, end-to-end AI flow, concurrent edit handling, LLM failure scenarios, test coverage, A1 deviations. Owner: Yintong. Partners: Alexander, Anel.
+- [x] Rehearse the 5-minute demo in the exact spec order: register → create → rich-text + auto-save → share with role enforcement → two-window collab → AI streaming (two features, suggestion UX, cancel) → version restore. Owner: Alexander. Partners: Yintong, Anel.
+- [x] Prepare Q&A answers: JWT refresh, end-to-end AI flow, concurrent edit handling, LLM failure scenarios, test coverage, A1 deviations. Owner: Yintong. Partners: Alexander, Anel.
 
 ---
 
@@ -138,5 +138,5 @@ Each item has one primary owner. Add a partner only when cross-team coordination
 ## Open questions for the team
 
 - [x] Do we have a shared Gemini API key, or one key per dev in `.env`? We'll use env. variables
-- [ ] Who owns the run-script / Makefile updates as features land?
-- [ ] Who writes the final deviation report rollup before submission?
+- [x] Who owns the run-script / Makefile updates as features land?
+- [x] Who writes the final deviation report rollup before submission?
