@@ -1,3 +1,0 @@
-This file contains the feedback that we received from assignment 1. Our grade was 92.5%.
-
-Deductions were applied because the authentication design is not clearly specified for both REST and WebSocket flows, the PoC collaboration flow could not be demonstrated end to end, the container and module diagrams omit concrete technology choices and per-container responsibilities, and the repository provides limited collaboration evidence and no automated tests.
